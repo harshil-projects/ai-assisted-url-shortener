@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<!--
+  Project suppressions. Each entry states why.
+
+  Javadoc presence checks are enforced only on the public API package
+  (url-shortener/src/main/java/dev/harshil/shortener/api). Elsewhere, Javadoc is written where it
+  adds information and reviewed by hand; a forced one-line Javadoc on every private helper is noise.
+  Test sources are exempt from Javadoc and from the method length rule because a readable test
+  sometimes lists many cases in one method.
+-->
+<suppressions>
+  <suppress checks="MissingJavadocMethod|MissingJavadocType|SummaryJavadoc|JavadocMethod|JavadocParagraph|JavadocTagContinuationIndentation|RequireEmptyLineBeforeBlockTagGroup"
+            files="^(?!.*[\/]url-shortener[\/]src[\/]main[\/]java[\/]dev[\/]harshil[\/]shortener[\/]api[\/]).*$"/>
+  <suppress checks="MethodLength|AbbreviationAsWordInName|VariableDeclarationUsageDistance"
+            files="[\/]src[\/]test[\/]java[\/]"/>
+</suppressions>

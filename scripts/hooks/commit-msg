@@ -1,0 +1,63 @@
+#!/bin/sh
+# commit-msg hook: Conventional Commits header plus a Task trailer (design section 4.4).
+#
+# Enable once per clone:   git config core.hooksPath scripts/hooks
+# Runs under Git for Windows sh and any POSIX sh. Needs LF line endings and the executable bit
+# (git update-index --chmod=+x scripts/hooks/commit-msg) for Linux and macOS clones.
+#
+# Rules:
+#   1. The first non-comment line matches
+#      ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?!?: .{1,72}$
+#   2. Unless the commit is a merge, a trailer line matches ^Task: T-[0-9]{3}$
+# Merge commits (MERGE_HEAD present, or a header starting with "Merge ") are exempt from both rules.
+
+msg_file=$1
+if [ -z "$msg_file" ] || [ ! -r "$msg_file" ]; then
+  echo "commit-msg: cannot read the commit message file '$msg_file'" >&2
+  exit 1
+fi
+
+# Drop carriage returns and comment lines, as git will before it records the message.
+body=$(tr -d '\r' < "$msg_file" | grep -v '^#')
+header=$(printf '%s\n' "$body" | sed '/^[[:space:]]*$/d' | head -n 1)
+
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+case "$header" in
+  "Merge "*) exit 0 ;;
+esac
+
+header_re='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?!?: .{1,72}$'
+trailer_re='^Task: T-[0-9]{3}$'
+failed=0
+
+if ! printf '%s\n' "$header" | grep -Eq "$header_re"; then
+  echo "commit-msg: the first line is not a Conventional Commit header." >&2
+  echo "  got:      $header" >&2
+  echo "  expected: <type>(<scope>)?!?: <description of 1 to 72 characters>" >&2
+  echo "  types:    feat fix docs style refactor perf test build ci chore revert" >&2
+  echo "  scope:    lowercase letters, digits, and hyphens, for example (redirect)" >&2
+  failed=1
+fi
+
+if ! printf '%s\n' "$body" | grep -Eq "$trailer_re"; then
+  echo "commit-msg: no Task trailer found." >&2
+  echo "  add a final line exactly like:  Task: T-004" >&2
+  echo "  the id must exist as harness/tasks/T-004.yaml; harness-check verifies it in the build" >&2
+  failed=1
+fi
+
+if [ "$failed" -ne 0 ]; then
+  echo "" >&2
+  echo "Example:" >&2
+  echo "  feat(redirect): return 410 for expired links" >&2
+  echo "" >&2
+  echo "  Expired rows are kept so stats keep working; the controller sets Cache-Control: no-store." >&2
+  echo "" >&2
+  echo "  Task: T-102" >&2
+  echo "" >&2
+  echo "No AI product names in commit messages; tool and model live in the ledger entry the trailer resolves to." >&2
+  exit 1
+fi
+exit 0

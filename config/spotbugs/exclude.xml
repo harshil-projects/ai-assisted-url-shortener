@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs and Find Security Bugs exclusions. Every entry carries the task that reviewed it and the
+  reason. Add entries only with both; prefer fixing the code.
+-->
+<FindBugsFilter>
+
+  <!--
+    T-000: Spring Boot application class. The generated main method and the Boot launcher are not
+    the project's code to analyse; everything else in the package is analysed.
+  -->
+  <Match>
+    <Class name="dev.harshil.shortener.UrlShortenerApplication"/>
+  </Match>
+
+  <!--
+    T-000: Records used as request and response DTOs expose their components by design; they carry
+    only immutable values (Strings, Instants, boxed numbers), so EI_EXPOSE_REP does not apply.
+  -->
+  <Match>
+    <Package name="dev.harshil.shortener.api.dto"/>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+
+  <!--
+    T-000: EI_EXPOSE_REP2 fires on every constructor-injected collaborator (JsonMapper, repositories,
+    MeterRegistry, Clock). Storing a shared Spring singleton is the point of constructor injection,
+    not an exposure. Collections or arrays received from callers are copied (List.copyOf) by
+    convention, which the review checklist covers. EI_EXPOSE_REP (returning internals) stays on.
+  -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+  </Match>
+
+  <!--
+    T-000: CSRF protection is disabled on purpose in all three filter chains (design 3.7, threat
+    model). The management API is authenticated by the X-API-Key header, which a browser never
+    attaches automatically, and the service sets no session cookie, so a cross-site request cannot
+    carry credentials. The API-docs chain serves GET-only static resources. The H2 console chain
+    exists only when spring.h2.console.enabled=true (dev profile) and the console posts its own forms
+    without a CSRF token. Re-enable CSRF if cookie-based authentication is ever introduced.
+  -->
+  <Match>
+    <Class name="dev.harshil.shortener.config.SecurityConfig"/>
+    <Bug pattern="SPRING_CSRF_PROTECTION_DISABLED"/>
+  </Match>
+
+</FindBugsFilter>
