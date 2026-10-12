@@ -4,7 +4,7 @@ requirement: R-01
 activities: [test-gen, document]
 impact: normal
 impact_reasons: []
-status: in-progress
+status: done
 depends_on: [T-008]
 intent: >
   Close the greenfield scenario: end-to-end integration tests from create to redirect to stats,
