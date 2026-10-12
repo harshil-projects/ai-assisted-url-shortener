@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URL Shortener: System Design Overview</title>
+<style>
+  :root{--paper:#fbfaf6;--ink:#1b1f24;--muted:#5b6470;--line:#d9d4c7;--ctrl:#b4452a;--data:#0b6e4f;--async:#7a4bb0;--soft:#f1ede3;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.45;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:48px 48px;background-position:-1px -1px}
+  main{max-width:1180px;margin:0 auto;padding:40px 28px 80px;background:rgba(251,250,246,.96)}
+  header{border-bottom:3px solid var(--ink);padding-bottom:18px;margin-bottom:28px;display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end}
+  h1{font-size:34px;margin:0;letter-spacing:-.02em;line-height:1.1}
+  h1 small{display:block;font-size:14px;font-weight:500;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+  .meta{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+  h2{font-size:22px;margin:44px 0 10px;letter-spacing:-.01em;display:flex;align-items:baseline;gap:12px}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--ctrl);font-weight:600}
+  h3{font-size:15px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  p{max-width:78ch}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0 6px}
+  th{text-align:left;font-weight:600;border-bottom:2px solid var(--ink);padding:8px 10px;background:var(--soft)}
+  td{border-bottom:1px solid var(--line);padding:7px 10px;vertical-align:top}
+  td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  code,.k{font-family:var(--mono);font-size:12.5px;background:var(--soft);padding:1px 5px;border-radius:3px}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .card{border:1.5px solid var(--ink);padding:12px 14px;background:#fff;box-shadow:4px 4px 0 var(--line)}
+  .card h4{margin:0 0 6px;font-size:14px}
+  .card p,.card li{font-size:13px;margin:4px 0}
+  .lane{display:grid;grid-template-columns:150px 1fr;gap:0;border:1.5px solid var(--ink);background:#fff;margin:10px 0}
+  .lane > div{padding:10px 12px;border-bottom:1px solid var(--line)}
+  .lane > div:nth-child(odd){background:var(--soft);font-family:var(--mono);font-size:12px;font-weight:600;border-right:1px solid var(--line)}
+  .lane > div:nth-last-child(-n+2){border-bottom:0}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 7px;border:1px solid currentColor;border-radius:999px;margin-right:6px}
+  .ctrl{color:var(--ctrl)} .data{color:var(--data)} .async{color:var(--async)}
+  svg{width:100%;height:auto;display:block;background:#fff;border:1.5px solid var(--ink);box-shadow:4px 4px 0 var(--line)}
+  svg text{font-family:var(--sans);font-size:12px;fill:var(--ink)}
+  svg .m{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+  svg .box{fill:#fff;stroke:var(--ink);stroke-width:1.5}
+  svg .soft{fill:var(--soft);stroke:var(--ink);stroke-width:1.5}
+  svg .db{fill:#e6f3ee;stroke:var(--data);stroke-width:1.5}
+  svg .ext{fill:#fff;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3}
+  svg .ar{stroke:var(--ink);stroke-width:1.4;fill:none;marker-end:url(#a)}
+  svg .ar.c{stroke:var(--ctrl);marker-end:url(#ac)}
+  svg .ar.d{stroke:var(--data);marker-end:url(#ad)}
+  svg .ar.s{stroke:var(--async);stroke-dasharray:5 3;marker-end:url(#as)}
+  .legend{font-family:var(--mono);font-size:12px;color:var(--muted);margin:6px 0 0}
+  .math{font-family:var(--mono);font-size:13px;background:#fff;border:1.5px solid var(--ink);padding:10px 14px;margin:8px 0}
+  footer{margin-top:50px;border-top:1px solid var(--line);padding-top:12px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+  @media (max-width:800px){.g2,.g3{grid-template-columns:1fr}header{grid-template-columns:1fr}.meta{text-align:left}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1><small>Design overview, companion to 2026-10-12-system-design.md v2</small>URL Shortener: requirements, architecture, algorithm, data</h1>
+  <div class="meta">Java 21 · Spring Boot 4.1.1 · H2 file mode · single node<br>status: awaiting engineer approval · 2026-10-12</div>
+</header>
+
+<h2><span class="n">01</span> Requirements</h2>
+<div class="grid g2">
+<div>
+<h3>Functional</h3>
+<table>
+<tr><th>ID</th><th>Requirement</th><th>Scenario</th></tr>
+<tr><td>FR-01</td><td>POST a valid http/https URL, get a unique 7-char Base62 code, 201 with Location</td><td>Greenfield</td></tr>
+<tr><td>FR-02</td><td>Custom alias <code>^[A-Za-z0-9_-]{4,32}$</code>, not reserved, not taken</td><td>Greenfield</td></tr>
+<tr><td>FR-03</td><td>Taken alias, including a lost race, answers 409</td><td>Greenfield</td></tr>
+<tr><td>FR-04</td><td>Invalid, credentialed, oversized, or internal-host URLs answer 400 with field errors</td><td>Greenfield</td></tr>
+<tr><td>FR-05</td><td>GET /{code} answers 302 + Location + Cache-Control no-store</td><td>Greenfield</td></tr>
+<tr><td>FR-06</td><td>Unknown or malformed code answers 404; malformed never hits the database</td><td>Greenfield</td></tr>
+<tr><td>FR-07</td><td>Click recorded off the request thread via a bounded queue</td><td>Greenfield</td></tr>
+<tr><td>FR-08</td><td>Stats: total, last 24h, last 7d, last clicked</td><td>Greenfield</td></tr>
+<tr><td>FR-09</td><td>Metadata read and delete with cascade</td><td>Greenfield</td></tr>
+<tr><td>FR-10</td><td>/api/v1/** requires X-API-Key; 401 carries WWW-Authenticate</td><td>Greenfield</td></tr>
+<tr><td>FR-11</td><td>Create rate limit answers 429 with Retry-After</td><td>Greenfield</td></tr>
+<tr><td>FR-12</td><td>Health, info, metrics, Prometheus; OpenAPI matching the committed copy; working Swagger UI</td><td>Greenfield</td></tr>
+<tr><td>FR-13</td><td>expiresAt: RFC 3339 with offset, future only</td><td>Brownfield</td></tr>
+<tr><td>FR-14</td><td>Expired: 410 no-store, row and history kept, expired:true in metadata and stats</td><td>Brownfield</td></tr>
+<tr><td>FR-15</td><td>"Where do clicks come from" is decided in the clarification task, not pre-decided</td><td>Ambiguous</td></tr>
+</table>
+</div>
+<div>
+<h3>Non-functional</h3>
+<table>
+<tr><th>ID</th><th>Quality</th><th>Measure</th></tr>
+<tr><td>NFR-01</td><td>Portability</td><td>Green build on Windows and Linux with JDK 21 only</td></tr>
+<tr><td>NFR-02</td><td>Performance</td><td>Redirect is one indexed read; p99 under 200 ms in-process smoke</td></tr>
+<tr><td>NFR-03</td><td>Reliability</td><td>Analytics failure or saturation never fails a redirect</td></tr>
+<tr><td>NFR-04</td><td>Reliability</td><td>Graceful shutdown drains queued clicks up to 10 s</td></tr>
+<tr><td>NFR-05</td><td>Security</td><td>No open redirect beyond stored URL; non-enumerable codes; key guessing throttled; headers set</td></tr>
+<tr><td>NFR-06</td><td>Privacy</td><td>No IP or raw user agent ever persisted</td></tr>
+<tr><td>NFR-07</td><td>Observability</td><td>Correlation id on every request and error; counters for creates, redirects, drops</td></tr>
+<tr><td>NFR-08</td><td>Maintainability</td><td>Methods under 50 lines, files under 400, constructor injection, enforced by Checkstyle</td></tr>
+<tr><td>NFR-09</td><td>Testability</td><td>80 percent line, 70 percent branch, no untouched class, one runner</td></tr>
+<tr><td>NFR-10</td><td>Change safety</td><td>Flyway-versioned schema validated at startup; SQL in the H2 and PostgreSQL intersection</td></tr>
+<tr><td>NFR-11</td><td>Process auditability</td><td>Spec, prompt, raw output, review, gates, commit, sign-off traceable; zero harness violations</td></tr>
+</table>
+<p class="legend">Assumed read:write ratio 10:1. Capacity targets are for a single laptop; the scaling path is documented, not built.</p>
+</div>
+</div>
+
+<h2><span class="n">02</span> System context</h2>
+<svg viewBox="0 0 1120 300" role="img" aria-label="System context diagram">
+<defs>
+<marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1b1f24"/></marker>
+<marker id="ac" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4452a"/></marker>
+<marker id="ad" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#0b6e4f"/></marker>
+<marker id="as" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a4bb0"/></marker>
+</defs>
+<rect x="30" y="40" width="170" height="64" class="ext"/><text x="115" y="66" text-anchor="middle">API client</text><text x="115" y="84" text-anchor="middle" class="m">X-API-Key over HTTP</text>
+<rect x="30" y="140" width="170" height="64" class="ext"/><text x="115" y="166" text-anchor="middle">Browser</text><text x="115" y="184" text-anchor="middle" class="m">GET /{code}</text>
+<rect x="30" y="230" width="170" height="50" class="ext"/><text x="115" y="252" text-anchor="middle">Reviewer</text><text x="115" y="268" text-anchor="middle" class="m">clone · verify · run</text>
+<rect x="380" y="60" width="330" height="170" class="box"/><text x="545" y="88" text-anchor="middle" font-weight="600">url-shortener service</text><text x="545" y="108" text-anchor="middle" class="m">Spring Boot 4.1.1 · Java 21 · one JVM · port 8080</text>
+<text x="545" y="134" text-anchor="middle" class="m">POST /api/v1/links → 201   ·   GET /{code} → 302</text><text x="545" y="152" text-anchor="middle" class="m">GET /api/v1/links/{code} · GET …/{code}/stats · DELETE …/{code}</text><text x="545" y="170" text-anchor="middle" class="m">/actuator/health · /actuator/metrics · /v3/api-docs · /swagger-ui.html</text><text x="545" y="196" text-anchor="middle" class="m">filters → controllers → services → repositories</text>
+<rect x="860" y="100" width="220" height="90" rx="6" class="db"/><text x="970" y="132" text-anchor="middle" font-weight="600">H2 file database</text><text x="970" y="152" text-anchor="middle" class="m">./data/urlshortener.mv.db</text><text x="970" y="170" text-anchor="middle" class="m">schema owned by Flyway</text>
+<rect x="380" y="250" width="330" height="40" class="ext"/><text x="545" y="275" text-anchor="middle" class="m">Build-time only: engineer + Claude Code (specs, review, ledger, gates)</text>
+<path d="M200,72 L380,100" class="ar c"/><path d="M200,172 L380,150" class="ar c"/><path d="M200,255 L380,230" class="ar"/>
+<path d="M710,145 L860,145" class="ar d"/><text x="785" y="138" text-anchor="middle" class="m">JDBC</text>
+</svg>
+<p class="legend">dashed = outside the system boundary · rust arrows = control requests · green = data access · purple dashed = asynchronous</p>
+
+<h3>Logical services: write path, read path, management</h3>
+<svg viewBox="0 0 1120 340" role="img" aria-label="Logical services with their APIs">
+<rect x="250" y="20" width="600" height="300" fill="none" stroke="#1b1f24" stroke-width="1.5" stroke-dasharray="6 4"/><text x="266" y="40" class="m">one JVM today · three services that separate cleanly tomorrow</text>
+<rect x="30" y="60" width="170" height="54" class="ext"/><text x="115" y="83" text-anchor="middle">API client</text><text x="115" y="100" text-anchor="middle" class="m">marketing tool, script</text>
+<rect x="30" y="210" width="170" height="54" class="ext"/><text x="115" y="233" text-anchor="middle">Browser</text><text x="115" y="250" text-anchor="middle" class="m">anyone clicking a short link</text>
+<rect x="280" y="60" width="250" height="70" class="box"/><text x="405" y="84" text-anchor="middle" font-weight="600">URL Shortening Service</text><text x="405" y="102" text-anchor="middle" class="m">write path · POST /api/v1/links</text><text x="405" y="118" text-anchor="middle" class="m">validate → code → insert → 201</text>
+<rect x="280" y="145" width="250" height="70" class="box"/><text x="405" y="169" text-anchor="middle" font-weight="600">Link Management &amp; Analytics</text><text x="405" y="187" text-anchor="middle" class="m">GET /api/v1/links/{code} · GET …/stats</text><text x="405" y="203" text-anchor="middle" class="m">DELETE /api/v1/links/{code}</text>
+<rect x="280" y="230" width="250" height="70" class="soft"/><text x="405" y="254" text-anchor="middle" font-weight="600">URL Redirection Service</text><text x="405" y="272" text-anchor="middle" class="m">read path, hot · GET /{code}</text><text x="405" y="288" text-anchor="middle" class="m">lookup → 302 / 404 / 410 → emit click</text>
+<rect x="590" y="230" width="230" height="70" class="soft"/><text x="705" y="254" text-anchor="middle" font-weight="600">Click Recorder</text><text x="705" y="272" text-anchor="middle" class="m">async, bounded queue</text><text x="705" y="288" text-anchor="middle" class="m">one INSERT per click</text>
+<rect x="880" y="120" width="210" height="100" rx="6" class="db"/><text x="985" y="150" text-anchor="middle" font-weight="600">Store</text><text x="985" y="170" text-anchor="middle" class="m">links (code UNIQUE)</text><text x="985" y="188" text-anchor="middle" class="m">click_events (link_id, time)</text><text x="985" y="206" text-anchor="middle" class="m">H2 now · PostgreSQL later</text>
+<path d="M200,80 L280,90" class="ar c"/><text x="232" y="72" class="m">X-API-Key</text>
+<path d="M200,95 L280,170" class="ar c"/>
+<path d="M200,237 L280,265" class="ar c"/><text x="215" y="285" class="m">no auth, public</text>
+<path d="M530,95 C700,95 760,140 880,150" class="ar d"/><text x="690" y="100" class="m">INSERT link, own tx</text>
+<path d="M530,180 L880,180" class="ar d"/><text x="690" y="173" class="m">SELECT · aggregate · DELETE</text>
+<path d="M530,255 C640,230 760,215 880,205" class="ar d"/><text x="640" y="228" class="m">SELECT by code</text>
+<path d="M530,280 L590,280" class="ar s"/>
+<path d="M820,265 C860,260 880,240 900,220" class="ar s"/><text x="840" y="300" class="m">INSERT click_event</text>
+</svg>
+<p class="legend">Read:write around 10:1, so the redirection service is the one to cache and replicate first; it shares nothing with the write path except the store.</p>
+
+<h3>API surface</h3>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th><th>Auth</th><th>Success</th><th>Errors</th></tr>
+<tr><td>POST /api/v1/links</td><td>Create a short link from a URL, optional custom alias, optional expiresAt (brownfield)</td><td>API key</td><td>201, Location, LinkResponse</td><td>400 401 409 413 415 429 503</td></tr>
+<tr><td>GET /{code}</td><td>Retrieve the target and redirect</td><td>none</td><td>302 Location, no-store</td><td>404, 410 expired, 503</td></tr>
+<tr><td>HEAD /{code}</td><td>Same resolution, not counted as a click</td><td>none</td><td>302</td><td>404, 410</td></tr>
+<tr><td>GET /api/v1/links/{code}</td><td>Link metadata</td><td>API key</td><td>200 LinkResponse</td><td>401 404</td></tr>
+<tr><td>GET /api/v1/links/{code}/stats</td><td>Total, 24h, 7d, last click; breakdowns only if the ambiguous scenario decides so</td><td>API key</td><td>200 StatsResponse</td><td>401 404</td></tr>
+<tr><td>DELETE /api/v1/links/{code}</td><td>Delete link and its click events</td><td>API key</td><td>204</td><td>401 404</td></tr>
+<tr><td>GET /actuator/health, /health/liveness, /health/readiness</td><td>Service and database health</td><td>none</td><td>200 or 503</td><td></td></tr>
+<tr><td>GET /actuator/info, /metrics, /prometheus</td><td>Build info, counters, scrape endpoint</td><td>key in prod, open in dev</td><td>200</td><td></td></tr>
+<tr><td>GET /v3/api-docs, /v3/api-docs.yaml, /swagger-ui.html</td><td>Contract and interactive UI with an Authorize button</td><td>none</td><td>200</td><td></td></tr>
+</table>
+<p class="legend">Every error body is application/problem+json with a stable type URI, a request id, and a timestamp, whether it comes from a filter or a controller.</p>
+
+<h2><span class="n">03</span> Container view and request path</h2>
+<svg viewBox="0 0 1120 420" role="img" aria-label="Container diagram with filter chain">
+<rect x="20" y="20" width="1080" height="380" fill="none" stroke="#1b1f24" stroke-width="1.5" stroke-dasharray="6 4"/><text x="36" y="42" class="m">url-shortener JVM</text>
+<rect x="40" y="70" width="120" height="54" class="soft"/><text x="100" y="92" text-anchor="middle">RequestId</text><text x="100" y="110" text-anchor="middle" class="m">filter 1</text>
+<rect x="180" y="70" width="120" height="54" class="soft"/><text x="240" y="92" text-anchor="middle">RequestSize</text><text x="240" y="110" text-anchor="middle" class="m">413 over 16 KiB</text>
+<rect x="320" y="70" width="120" height="54" class="soft"/><text x="380" y="92" text-anchor="middle">RateLimit</text><text x="380" y="110" text-anchor="middle" class="m">Bucket4j per IP</text>
+<rect x="460" y="70" width="140" height="54" class="soft"/><text x="530" y="92" text-anchor="middle">Spring Security</text><text x="530" y="110" text-anchor="middle" class="m">API key · headers</text>
+<rect x="640" y="70" width="200" height="54" class="box"/><text x="740" y="88" text-anchor="middle">Controllers</text><text x="740" y="103" text-anchor="middle" class="m">POST/GET/DELETE /api/v1/links</text><text x="740" y="117" text-anchor="middle" class="m">GET /{code} · GET …/stats</text>
+<rect x="880" y="70" width="200" height="54" class="box"/><text x="980" y="92" text-anchor="middle">ApiExceptionHandler</text><text x="980" y="110" text-anchor="middle" class="m">+ ProblemWriter for filters</text>
+<path d="M160,97 L180,97" class="ar c"/><path d="M300,97 L320,97" class="ar c"/><path d="M440,97 L460,97" class="ar c"/><path d="M600,97 L640,97" class="ar c"/><path d="M840,97 L880,97" class="ar"/>
+<rect x="640" y="170" width="200" height="54" class="box"/><text x="740" y="192" text-anchor="middle">LinkService · AnalyticsService</text><text x="740" y="210" text-anchor="middle" class="m">validate · loop · stats</text>
+<rect x="400" y="170" width="200" height="54" class="box"/><text x="500" y="192" text-anchor="middle">CodeGenerator · UrlValidator</text><text x="500" y="210" text-anchor="middle" class="m">SecureRandom Base62 · URI rules</text>
+<rect x="640" y="260" width="200" height="54" class="box"/><text x="740" y="282" text-anchor="middle">LinkAllocator</text><text x="740" y="300" text-anchor="middle" class="m">one transaction per attempt</text>
+<rect x="880" y="200" width="200" height="54" class="soft"/><text x="980" y="222" text-anchor="middle">ClickRecorder</text><text x="980" y="240" text-anchor="middle" class="m">executor 2..4 threads, queue 1000</text>
+<rect x="640" y="340" width="200" height="44" class="box"/><text x="740" y="366" text-anchor="middle">Spring Data JPA repositories</text>
+<rect x="400" y="330" width="200" height="60" rx="6" class="db"/><text x="500" y="355" text-anchor="middle" font-weight="600">H2</text><text x="500" y="373" text-anchor="middle" class="m">links · click_events</text>
+<rect x="40" y="200" width="320" height="54" class="box"/><text x="200" y="222" text-anchor="middle">Actuator · springdoc</text><text x="200" y="240" text-anchor="middle" class="m">health, info, metrics, prometheus · /v3/api-docs, Swagger UI</text>
+<path d="M740,124 L740,170" class="ar"/><path d="M640,197 L600,197" class="ar"/><path d="M740,224 L740,260" class="ar"/><path d="M740,314 L740,340" class="ar"/><path d="M640,362 L600,362" class="ar d"/>
+<path d="M840,110 C900,130 940,160 960,200" class="ar s"/><text x="905" y="150" class="m">publish ClickRecorded</text>
+<path d="M980,254 C980,300 900,340 840,355" class="ar s"/><text x="905" y="320" class="m">insert, own tx</text>
+</svg>
+<p class="legend">Filter order matters: the rate limiter runs before authentication so API-key guessing is throttled too. Every error, from a filter or a controller, is RFC 9457 Problem Details with a request id.</p>
+
+<h2><span class="n">04</span> The two flows that matter</h2>
+<div class="grid g2">
+<div>
+<h3>Create: POST /api/v1/links</h3>
+<div class="lane">
+<div>1 filters</div><div>Request id assigned. Body over 16 KiB → 413. Bucket empty → 429. Bad key → 401 with WWW-Authenticate.</div>
+<div>2 validate</div><div>Absolute http/https, host present, no user info, ≤ 2048 chars, host not loopback, private, link-local, or metadata. Violations → 400 with <code>errors[]</code>.</div>
+<div>3 alias?</div><div>If given: regex, reserved list, fast <code>existsByCode</code> → 409 if taken.</div>
+<div>4 allocate</div><div>Loop ≤ 5: draw a code (or use the alias) → <code>LinkAllocator.insert</code> in <em>its own transaction</em>. Unique violation on <code>uk_links_code</code>: random code → retry; alias → 409.</div>
+<div>5 respond</div><div>201, <code>Location: /api/v1/links/{code}</code>, body with shortUrl derived from the request host unless <code>app.base-url</code> is set.</div>
+</div>
+</div>
+<div>
+<h3>Redirect: GET /{code}</h3>
+<div class="lane">
+<div>1 route</div><div>Path pattern <code>{code:[A-Za-z0-9_-]{4,32}}</code>, so favicon and dotfiles never reach the database.</div>
+<div>2 lookup</div><div>One indexed read by code. Missing → 404. Expired → 410. Both <code>Cache-Control: no-store</code>.</div>
+<div>3 hand off</div><div>Build immutable <code>ClickRecorded(linkId, now, requestId)</code> on the request thread; offer it to the bounded queue. Full queue → drop and count.</div>
+<div>4 respond</div><div>302 with <code>Location</code> and explicit <code>no-store</code>. HEAD resolves but is not counted.</div>
+<div>5 async</div><div>Executor thread inserts one row in its own transaction; failures are caught and counted, never propagated.</div>
+</div>
+</div>
+</div>
+
+<h2><span class="n">05</span> Short-code algorithm and why</h2>
+<div class="grid g2">
+<div class="card">
+<h4>Chosen: random 7-character Base62, uniqueness by the database, bounded retry</h4>
+<div class="math">alphabet = [0-9A-Za-z]  (62 symbols, URL-safe, no escaping)<br>code = 7 × SecureRandom.nextInt(62)<br>keyspace = 62^7 = 3,521,614,606,208 ≈ 3.5 × 10^12<br>birthday bound: E[collisions] ≈ n² / (2 × 62^7)<br>n = 1,000,000 → ≈ 0.14 expected collisions<br>n = 10,000,000 → ≈ 14 expected collisions<br>at 1,000 new links/s the keyspace lasts ≈ 111 years</div>
+<ul>
+<li>Non-enumerable by construction. Sequential codes can be scanned; the 2016 "Gone in Six Characters" study exposed private cloud documents that way.</li>
+<li>No extra infrastructure. The INSERT itself enforces uniqueness through the unique index; there is no separate lookup round trip.</li>
+<li>Collisions are rare but handled, never assumed away: each attempt is its own transaction so a violation cannot poison the request's transaction, and a lost race on a custom alias maps to 409 rather than a retry.</li>
+<li>SecureRandom is cryptographically strong and thread-safe; one shared instance.</li>
+</ul>
+</div>
+<div class="card">
+<h4>Alternatives and when they win</h4>
+<table>
+<tr><th>Approach</th><th>Pros</th><th>Why not here</th></tr>
+<tr><td>Base62(counter)</td><td>No collisions; shortest codes; decodable ids; the Redis INCR design with block reservation scales writes across regions</td><td>Enumerable unless obfuscated, and XOR or Hashids obfuscation is reversible; needs Redis; the right switch when many writers need decodable ids</td></tr>
+<tr><td>Hash(URL)</td><td>Deterministic; dedupes repeat URLs</td><td>Collides and must still be resolved; determinism leaks that two users shortened the same URL unless salted</td></tr>
+<tr><td>Snowflake</td><td>Uncoordinated, time-sortable</td><td>Encodes to about 11 Base62 chars and leaks creation time and worker id; solves distribution, not shortness</td></tr>
+<tr><td>Key generation service</td><td>Pre-generated blocks, zero collisions</td><td>A second service for a single node; listed as the scaling step</td></tr>
+</table>
+</div>
+</div>
+
+<h2><span class="n">06</span> Data model and migrations</h2>
+<div class="grid g3">
+<div class="card"><h4>links (V1, greenfield)</h4>
+<table><tr><th>Column</th><th>Type</th></tr>
+<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>code</td><td>VARCHAR(32), <code>uk_links_code</code> UNIQUE</td></tr><tr><td>original_url</td><td>VARCHAR(2048)</td></tr><tr><td>created_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td>expires_at</td><td>TIMESTAMP WITH TIME ZONE, nullable, <strong>V2 brownfield</strong></td></tr></table></div>
+<div class="card"><h4>click_events (V1)</h4>
+<table><tr><th>Column</th><th>Type</th></tr>
+<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>link_id</td><td>BIGINT, FK → links ON DELETE CASCADE</td></tr><tr><td>occurred_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td colspan="2">index <code>(link_id, occurred_at)</code> serves every stats query<br>V3 only if the ambiguous clarification decides so</td></tr></table></div>
+<div class="card"><h4>Rules</h4>
+<ul><li>Instant fields map to TIMESTAMP_UTC in Hibernate 7, hence time-zone columns, or startup validation fails.</li><li>One ALTER per column: H2 and PostgreSQL disagree on the multi-column form.</li><li>click_events.link_id is a plain column, so a click is one INSERT with no SELECT.</li><li>No IP, no raw user agent, ever.</li><li>Stats = one aggregate query: count, two conditional sums, max.</li></ul></div>
+</div>
+
+<h2><span class="n">07</span> Key decisions</h2>
+<table>
+<tr><th>ADR</th><th>Decision</th><th>Rejected</th><th>Deciding factor</th></tr>
+<tr><td>0001</td><td>Java 21, Spring Boot 4.1.1, Maven wrapper</td><td>Boot 3.5, Java 25, Gradle</td><td>Role requires Java; 4.1.x supported to mid-2027; reviewers' JDK</td></tr>
+<tr><td>0002</td><td>H2 file + Flyway + validate</td><td>PostgreSQL via Docker</td><td>No Docker or admin on reviewer laptops; schema change control</td></tr>
+<tr><td>0003</td><td>Random Base62 with per-attempt transactions</td><td>Counter, hash, Snowflake</td><td>Non-enumerable, no infrastructure, correctness under races</td></tr>
+<tr><td>0004</td><td>302 + no-store</td><td>301</td><td>301 is heuristically cacheable; clicks and expiry would be lost</td></tr>
+<tr><td>0005</td><td>Events table, async insert</td><td>Counter column; synchronous insert</td><td>Hot-row serialisation; redirect isolation</td></tr>
+<tr><td>0006</td><td>No IP or raw user agent</td><td>Truncated IP, salted hash</td><td>Regulated-firm privacy posture</td></tr>
+<tr><td>0007</td><td>Spring Security, API key, limiter before auth</td><td>Bare filter</td><td>Expected by enterprise reviewers; throttles key guessing</td></tr>
+<tr><td>0008</td><td>Process as code with a JUnit validator module</td><td>Markdown only; mini platform</td><td>Checkable traceability, product code untouched</td></tr>
+<tr><td>0009</td><td>Task trailer in commits, AI provenance in the ledger</td><td>Assisted-by trailers</td><td>Repository convention; ledger is the richer record</td></tr>
+</table>
+<p class="legend">Smaller decisions: platform threads because the H2 driver pins virtual threads on Java 21 · expired rows kept, no sweeper · hard delete with the alias-reclaim risk recorded · no server-side fetch of targets · no rollups.</p>
+
+<h2><span class="n">08</span> Security, reliability, observability</h2>
+<div class="grid g3">
+<div class="card"><h4>Security</h4><ul><li>Redirect only to the stored, pre-validated URL</li><li>Internal-host laundering blocked at create</li><li>API key, constant-time compare, prod fails fast without it</li><li>Rate limit before auth; body size cap; URL length cap</li><li>Log sanitiser for user-controlled values</li><li>Headers: nosniff, DENY, no-referrer, CSP on Swagger only</li><li>SpotBugs + FindSecBugs, gitleaks, Dependabot</li></ul></div>
+<div class="card"><h4>Reliability</h4><ul><li>One transaction per allocation attempt</li><li>Bounded click executor, drop-and-count, 10 s drain on shutdown</li><li>503 + Retry-After within 2 s when the database is unavailable</li><li>Graceful shutdown, readiness and liveness probes</li><li>Problem Details from every layer, identical shape</li></ul></div>
+<div class="card"><h4>Observability</h4><ul><li>X-Request-Id bounded and echoed; in logs and error bodies</li><li>Counters: links.created, redirects{outcome}, clicks.dropped</li><li>Actuator health with database indicator; build info</li><li>Prometheus endpoint; structured JSON logs in prod</li></ul></div>
+</div>
+
+<h2><span class="n">09</span> Scaling path</h2>
+<table>
+<tr><th>Concern</th><th>Prototype</th><th>Next</th><th>Later</th></tr>
+<tr><td>Database</td><td>H2 file</td><td>PostgreSQL, same SQL and migrations</td><td>Read replicas</td></tr>
+<tr><td>Hot lookups</td><td>Indexed read</td><td>Caffeine cache, evict on delete and expiry</td><td>Redis provider, same @Cacheable code</td></tr>
+<tr><td>Clicks</td><td>Async insert, one aggregate query</td><td>Hourly rollups with a watermark</td><td>Queue and streaming aggregation</td></tr>
+<tr><td>Rate limit</td><td>In-process Bucket4j</td><td>Bucket4j on Redis</td><td>Edge limiting</td></tr>
+<tr><td>Codes</td><td>Random + retry</td><td>Pre-generated key blocks or an obfuscated counter</td><td>Key generation service</td></tr>
+<tr><td>Instances</td><td>One</td><td>Stateless nodes behind a load balancer, trusted-proxy config</td><td>Multi-region</td></tr>
+</table>
+
+<h2><span class="n">10</span> Deployment for the reviewer</h2>
+<div class="grid g2">
+<div class="card"><h4>What they need</h4><ul><li>JDK 21 (zip install, no admin)</li><li>Internet to Maven Central once; proxy and truststore notes in README</li><li>Git or Download ZIP</li></ul></div>
+<div class="card"><h4>What they run</h4><ul><li><code>.\mvnw.cmd -pl url-shortener spring-boot:run</code></li><li>Swagger UI at <code>/swagger-ui.html</code>, Authorize with the dev key</li><li><code>.\mvnw.cmd verify</code> runs every gate and the traceability check</li></ul></div>
+</div>
+
+<footer>Source of truth: docs/design/2026-10-12-system-design.md · This page is self-contained; no external assets.</footer>
+</main>
+</body>
+</html>
