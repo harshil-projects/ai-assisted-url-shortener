@@ -40,7 +40,7 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-${{ matrix.os }}
           if-no-files-found: warn
@@ -91,7 +91,7 @@ jobs:
         run: ./mvnw -B -ntp -DskipTests package
 
       - name: Upload the application jar
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: url-shortener-jar
           path: url-shortener/target/*.jar
