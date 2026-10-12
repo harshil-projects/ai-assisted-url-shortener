@@ -121,6 +121,18 @@ class SyntheticScanAndHistoryTest {
   }
 
   @Test
+  void hc12_ignoresPlannedTasksWhoseAnalysisDoesNotExistYet() throws IOException {
+    harness.write(
+        "harness/tasks/T-001.yaml",
+        SyntheticHarness.VALID_TASK
+            .replace("status: done", "status: todo")
+            .concat("impact_analysis: docs/impact/not-written-yet.md\n"));
+    GitLog gitLog = GitLog.of(root, List.of());
+
+    assertThat(Rules.hc12(harness.open(), gitLog)).isEmpty();
+  }
+
+  @Test
   void hc12_isSilentWhenHistoryIsSkipped() throws IOException {
     harness.write(
         "harness/tasks/T-001.yaml",

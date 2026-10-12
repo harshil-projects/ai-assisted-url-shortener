@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement, document]
 impact: high
 impact_reasons: [dependency]
-status: in-progress
+status: done
 depends_on: []
 intent: >
   Prove the build toolchain on this machine and commit the process skeleton before the first

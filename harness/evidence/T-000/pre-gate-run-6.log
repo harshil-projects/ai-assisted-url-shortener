@@ -1,0 +1,239 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor)                                [pom]
+[INFO] url-shortener                                                      [jar]
+[INFO] 
+[INFO] ----------< dev.harshil.shortener:ai-assisted-url-shortener >-----------
+[INFO] Building AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT        [1/2]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ ai-assisted-url-shortener ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ ai-assisted-url-shortener ---
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ ai-assisted-url-shortener ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\target\\jacoco.exec
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ ai-assisted-url-shortener ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ ai-assisted-url-shortener ---
+[INFO] Skipping JaCoCo execution due to missing execution data file.
+[INFO] 
+[INFO] ----------------< dev.harshil.shortener:url-shortener >-----------------
+[INFO] Building url-shortener 0.1.0-SNAPSHOT                              [2/2]
+[INFO]   from url-shortener\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ url-shortener ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ url-shortener ---
+[INFO] Spotless.Java is keeping 11 files clean - 0 needs changes to be clean, 0 were already clean, 11 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- dependency:3.10.0:properties (mockito-agent-path) @ url-shortener ---
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ url-shortener ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\url-shortener\\target\\jacoco.exec,excludes=dev/harshil/shortener/UrlShortenerApplication.class:dev/harshil/shortener/api/dto/**
+[INFO] 
+[INFO] --- spring-boot:4.1.1:build-info (build-info) @ url-shortener ---
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ url-shortener ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO] Copying 1 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ url-shortener ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ url-shortener ---
+[INFO] Copying 1 resource from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ url-shortener ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 4 source files with javac [debug parameters release 21] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ url-shortener ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running dev.harshil.shortener.api.ProblemDetailsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.795 s -- in dev.harshil.shortener.api.ProblemDetailsTest
+[INFO] Running dev.harshil.shortener.config.SecuritySmokeIT
+07:30:40.971 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.SecuritySmokeIT]: SecuritySmokeIT does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+07:30:41.356 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.SecuritySmokeIT
+07:30:41.693 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.SecuritySmokeIT]: SecuritySmokeIT does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+07:30:41.702 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.SecuritySmokeIT
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.1.1)
+
+2026-10-12T07:30:42.886+05:30  INFO 9544 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : Starting SecuritySmokeIT using Java 21.0.12.1 with PID 9544 (started by Dell in C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener)
+2026-10-12T07:30:42.892+05:30  INFO 9544 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : The following 1 profile is active: "test"
+2026-10-12T07:30:45.606+05:30  INFO 9544 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-12T07:30:45.667+05:30  INFO 9544 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 34 ms. Found 0 JPA repository interfaces.
+2026-10-12T07:30:47.520+05:30  INFO 9544 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat initialized with port 0 (http)
+2026-10-12T07:30:47.562+05:30  INFO 9544 --- [url-shortener] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-12T07:30:47.564+05:30  INFO 9544 --- [url-shortener] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/11.0.24]
+2026-10-12T07:30:47.736+05:30  INFO 9544 --- [url-shortener] [           main] b.w.c.s.WebApplicationContextInitializer : Root WebApplicationContext: initialization completed in 4767 ms
+2026-10-12T07:30:48.849+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-12T07:30:49.623+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:urlshortener user=SA
+2026-10-12T07:30:49.628+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-12T07:30:49.672+05:30  INFO 9544 --- [url-shortener] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:urlshortener (H2 2.4)
+2026-10-12T07:30:49.876+05:30  WARN 9544 --- [url-shortener] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-10-12T07:30:49.945+05:30  INFO 9544 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "public"."flyway_schema_history" does not exist yet
+2026-10-12T07:30:49.950+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 1 migration (execution time 00:00.039s)
+2026-10-12T07:30:49.967+05:30  INFO 9544 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "public"."flyway_schema_history" ...
+2026-10-12T07:30:50.057+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": << Empty Schema >>
+2026-10-12T07:30:50.072+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "1 - create links and click events"
+2026-10-12T07:30:50.122+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 1 migration to schema "public", now at version v1 (execution time 00:00.025s)
+2026-10-12T07:30:50.447+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-10-12T07:30:50.597+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000001: Hibernate ORM core version 7.4.5.Final
+2026-10-12T07:30:51.874+05:30  INFO 9544 --- [url-shortener] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-12T07:30:52.118+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:urlshortener]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: urlshortener/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-12T07:30:53.362+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-12T07:30:53.481+05:30  INFO 9544 --- [url-shortener] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-12T07:30:54.674+05:30  WARN 9544 --- [url-shortener] [           main] .s.a.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: a0ccece5-f13d-4807-9e75-b4e66006f60e
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-12T07:30:54.727+05:30  INFO 9544 --- [url-shortener] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-10-12T07:30:58.658+05:30  INFO 9544 --- [url-shortener] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2026-10-12T07:30:58.883+05:30  INFO 9544 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 55406 (http) with context path '/'
+2026-10-12T07:30:58.917+05:30  INFO 9544 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : Started SecuritySmokeIT in 17.035 seconds (process running for 21.655)
+2026-10-12T07:30:59.112+05:30  WARN 9544 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /v3/api-docs endpoint is enabled by default. To disable it in production, set the property 'springdoc.api-docs.enabled=false'
+2026-10-12T07:30:59.112+05:30  WARN 9544 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /swagger-ui.html endpoint is enabled by default. To disable it in production, set the property 'springdoc.swagger-ui.enabled=false'
+2026-10-12T07:31:00.491+05:30  INFO 9544 --- [url-shortener] [o-auto-1-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-12T07:31:00.491+05:30  INFO 9544 --- [url-shortener] [o-auto-1-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-12T07:31:00.494+05:30  INFO 9544 --- [url-shortener] [o-auto-1-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 2 ms
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 20.81 s -- in dev.harshil.shortener.config.SecuritySmokeIT
+[INFO] Running dev.harshil.shortener.UrlShortenerApplicationTest
+2026-10-12T07:31:01.294+05:30  INFO 9544 --- [url-shortener] [           main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [dev.harshil.shortener.UrlShortenerApplicationTest]: UrlShortenerApplicationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-10-12T07:31:01.315+05:30  INFO 9544 --- [url-shortener] [           main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.UrlShortenerApplicationTest
+2026-10-12T07:31:01.318+05:30  INFO 9544 --- [url-shortener] [           main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [dev.harshil.shortener.UrlShortenerApplicationTest]: UrlShortenerApplicationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-10-12T07:31:01.321+05:30  INFO 9544 --- [url-shortener] [           main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.UrlShortenerApplicationTest
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.1.1)
+
+2026-10-12T07:31:01.475+05:30  INFO 9544 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : Starting UrlShortenerApplicationTest using Java 21.0.12.1 with PID 9544 (started by Dell in C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener)
+2026-10-12T07:31:01.475+05:30  INFO 9544 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : The following 1 profile is active: "test"
+2026-10-12T07:31:02.446+05:30  INFO 9544 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-12T07:31:02.474+05:30  INFO 9544 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 18 ms. Found 0 JPA repository interfaces.
+2026-10-12T07:31:02.848+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Starting...
+2026-10-12T07:31:02.854+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:urlshortener user=SA
+2026-10-12T07:31:02.855+05:30  INFO 9544 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Start completed.
+2026-10-12T07:31:02.856+05:30  INFO 9544 --- [url-shortener] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:urlshortener (H2 2.4)
+2026-10-12T07:31:02.873+05:30  WARN 9544 --- [url-shortener] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-10-12T07:31:02.901+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 1 migration (execution time 00:00.023s)
+2026-10-12T07:31:02.910+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": 1
+2026-10-12T07:31:02.912+05:30  INFO 9544 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Schema "public" is up to date. No migration necessary.
+2026-10-12T07:31:02.967+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-10-12T07:31:03.050+05:30  INFO 9544 --- [url-shortener] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-12T07:31:03.057+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:urlshortener]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: urlshortener/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-12T07:31:03.121+05:30  INFO 9544 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-12T07:31:03.128+05:30  INFO 9544 --- [url-shortener] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-12T07:31:03.313+05:30  WARN 9544 --- [url-shortener] [           main] .s.a.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: c0e8a7e3-3721-4bb7-ad26-01170f713684
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-12T07:31:03.315+05:30  INFO 9544 --- [url-shortener] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-10-12T07:31:03.926+05:30  INFO 9544 --- [url-shortener] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2026-10-12T07:31:03.962+05:30  INFO 9544 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : Started UrlShortenerApplicationTest in 2.598 seconds (process running for 26.7)
+2026-10-12T07:31:03.964+05:30  WARN 9544 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /v3/api-docs endpoint is enabled by default. To disable it in production, set the property 'springdoc.api-docs.enabled=false'
+2026-10-12T07:31:03.964+05:30  WARN 9544 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /swagger-ui.html endpoint is enabled by default. To disable it in production, set the property 'springdoc.swagger-ui.enabled=false'
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.721 s -- in dev.harshil.shortener.UrlShortenerApplicationTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- jar:3.5.1:jar (default-jar) @ url-shortener ---
+[INFO] Building jar: C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- spring-boot:4.1.1:repackage (repackage) @ url-shortener ---
+[INFO] Replacing main artifact C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar with repackaged archive, adding nested dependencies in BOOT-INF/.
+[INFO] The original artifact has been renamed to C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar.original
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ url-shortener ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ url-shortener ---
+[INFO] Loading execution data file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\jacoco.exec
+[INFO] Analyzed bundle 'url-shortener' with 10 classes
+[INFO] 
+[INFO] --- jacoco:0.8.15:check (jacoco-check) @ url-shortener ---
+[INFO] Loading execution data file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\jacoco.exec
+[INFO] Analyzed bundle 'url-shortener' with 10 classes
+[WARNING] Rule violated for bundle url-shortener: branches covered ratio is 0.66, but expected minimum is 0.70
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor) ................ SUCCESS [  6.001 s]
+[INFO] url-shortener ...................................... FAILURE [ 38.078 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  44.702 s
+[INFO] Finished at: 2026-10-12T07:31:08+05:30
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.jacoco:jacoco-maven-plugin:0.8.15:check (jacoco-check) on project url-shortener: Coverage checks have not been met. See log for details. -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :url-shortener

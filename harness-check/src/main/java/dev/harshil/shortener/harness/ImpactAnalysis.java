@@ -23,14 +23,19 @@ final class ImpactAnalysis {
 
   private ImpactAnalysis() {}
 
-  /** HC-12 over every task that names an impact analysis; empty when git history is skipped. */
+  /**
+   * HC-12 over every done task that names an impact analysis; empty when git history is skipped.
+   * Tasks that are still planned are exempt: their analysis file is written when the task runs, so
+   * its absence beforehand is the expected state, not a gap.
+   */
   static List<Violation> check(HarnessRepo repo, GitLog gitLog) {
     List<Violation> out = new ArrayList<>();
     if (gitLog.skipped()) {
       return out;
     }
     for (TaskSpec task : repo.tasks()) {
-      if (task.impactAnalysis() != null && !task.impactAnalysis().isBlank()) {
+      boolean namesAnalysis = task.impactAnalysis() != null && !task.impactAnalysis().isBlank();
+      if (namesAnalysis && task.isDone()) {
         checkTask(repo, gitLog, task, out);
       }
     }

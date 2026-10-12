@@ -13,6 +13,288 @@
 #
 # entries and signoffs are written by hand. gates are appended by scripts/gate.ps1, which rewrites
 # "gates: []" to "gates:" on the first run and inserts each record at the end of the gates list.
-entries: []
-gates: []
-signoffs: []
+entries:
+  - task: T-000
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-000/v1.md
+    raw_output: harness/evidence/T-000/ai-raw.patch
+    files:
+      - { path: .claude/settings.json, status: generated }
+      - { path: .gitattributes, status: generated }
+      - { path: .github/PULL_REQUEST_TEMPLATE.md, status: generated }
+      - { path: .github/copilot-instructions.md, status: generated }
+      - { path: .gitignore, status: generated }
+      - { path: .mvn/jvm.config, status: generated }
+      - { path: .mvn/wrapper/maven-wrapper.properties, status: generated }
+      - { path: AGENTS.md, status: generated }
+      - { path: CHANGELOG.md, status: generated }
+      - { path: CLAUDE.md, status: generated }
+      - { path: LICENSE, status: generated }
+      - { path: README.md, status: generated }
+      - { path: docs/architecture.md, status: generated }
+      - { path: docs/decisions/.gitkeep, status: generated }
+      - { path: docs/decisions/0001-java-21-spring-boot-4-maven-wrapper.md, status: generated }
+      - { path: docs/decisions/0002-h2-file-mode-with-flyway-migrations.md, status: generated }
+      - { path: docs/decisions/0003-random-base62-codes-with-per-attempt-transactions.md, status: generated }
+      - { path: docs/decisions/0004-302-redirect-with-no-store.md, status: generated }
+      - { path: docs/decisions/0005-click-events-table-with-async-recording.md, status: generated }
+      - { path: docs/decisions/0006-no-ip-or-user-agent-persisted.md, status: generated }
+      - { path: docs/decisions/0007-spring-security-api-key-and-rate-limiter-before-auth.md, status: generated }
+      - { path: docs/decisions/0008-process-as-code-with-harness-check.md, status: generated }
+      - { path: docs/decisions/0009-task-trailer-and-ledger-provenance.md, status: generated }
+      - { path: docs/design/2026-10-12-system-design.md, status: generated }
+      - { path: docs/design/system-design-overview.html, status: generated }
+      - { path: docs/execution-approach.md, status: generated }
+      - { path: docs/reference/.gitkeep, status: generated }
+      - { path: docs/reference/api.md, status: generated }
+      - { path: docs/reports/.gitkeep, status: generated }
+      - { path: docs/risks-and-limitations.md, status: generated }
+      - { path: docs/scenarios/.gitkeep, status: generated }
+      - { path: docs/testing.md, status: generated }
+      - { path: docs/threat-model.md, status: generated }
+      - { path: harness-check/pom.xml, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/FileChange.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/FileScanner.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/GateRecord.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/GitLog.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/HarnessRepo.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/ImpactAnalysis.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/KeptRatio.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/Ledger.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/LedgerChecks.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/LedgerEntry.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/Rules.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/SignOff.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/TaskSpec.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/TaskSpecChecks.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/TraceabilityReport.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/Violation.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/Vocabulary.java, status: generated }
+      - { path: harness-check/src/main/java/dev/harshil/shortener/harness/YamlValues.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/GitRulesTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/HarnessTestSupport.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/LedgerRulesTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/ParsingHelpersTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/RepositoryScanRulesTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/SyntheticHarness.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/SyntheticScanAndHistoryTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/SyntheticTaskLedgerTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/TaskSpecRulesTest.java, status: generated }
+      - { path: harness-check/src/test/java/dev/harshil/shortener/harness/TraceabilityReportTest.java, status: generated }
+      - { path: harness/README.md, status: generated }
+      - { path: harness/ledger.yaml, status: generated }
+      - { path: harness/playbooks/debug.md, status: generated }
+      - { path: harness/playbooks/document.md, status: generated }
+      - { path: harness/playbooks/implement.md, status: generated }
+      - { path: harness/playbooks/refactor.md, status: generated }
+      - { path: harness/playbooks/review-prep.md, status: generated }
+      - { path: harness/playbooks/test-gen.md, status: generated }
+      - { path: harness/policy/secure-ai-usage.md, status: generated }
+      - { path: harness/requirements/R-01.md, status: generated }
+      - { path: harness/requirements/R-02.md, status: generated }
+      - { path: harness/requirements/R-03.md, status: generated }
+      - { path: harness/tasks/T-000.yaml, status: generated }
+      - { path: harness/tasks/T-001.yaml, status: generated }
+      - { path: harness/tasks/T-002.yaml, status: generated }
+      - { path: harness/tasks/T-003.yaml, status: generated }
+      - { path: harness/tasks/T-004.yaml, status: generated }
+      - { path: harness/tasks/T-005.yaml, status: generated }
+      - { path: harness/tasks/T-006.yaml, status: generated }
+      - { path: harness/tasks/T-007.yaml, status: generated }
+      - { path: harness/tasks/T-008.yaml, status: generated }
+      - { path: harness/tasks/T-009.yaml, status: generated }
+      - { path: harness/tasks/T-010.yaml, status: generated }
+      - { path: harness/tasks/T-101.yaml, status: generated }
+      - { path: harness/tasks/T-102.yaml, status: generated }
+      - { path: harness/tasks/T-103.yaml, status: generated }
+      - { path: harness/tasks/T-104.yaml, status: generated }
+      - { path: harness/tasks/T-105.yaml, status: generated }
+      - { path: harness/tasks/T-201.yaml, status: generated }
+      - { path: harness/tasks/T-202.yaml, status: generated }
+      - { path: harness/tasks/T-203.yaml, status: generated }
+      - { path: harness/templates/ledger-entry.template.yaml, status: generated }
+      - { path: harness/templates/requirement.template.md, status: generated }
+      - { path: harness/templates/review.template.md, status: generated }
+      - { path: harness/templates/task.template.yaml, status: generated }
+      - { path: mvnw, status: generated }
+      - { path: mvnw.cmd, status: generated }
+      - { path: pom.xml, status: generated }
+      - { path: scripts/demo.ps1, status: generated }
+      - { path: scripts/gate.ps1, status: generated }
+      - { path: scripts/hooks/commit-msg, status: generated }
+      - { path: scripts/report.ps1, status: generated }
+      - { path: scripts/run.ps1, status: generated }
+      - { path: scripts/snap.ps1, status: generated }
+      - { path: url-shortener/pom.xml, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/UrlShortenerApplication.java, status: generated }
+      - { path: url-shortener/src/main/resources/application-dev.properties, status: generated }
+      - { path: url-shortener/src/main/resources/application-prod.properties, status: generated }
+      - { path: url-shortener/src/main/resources/application.properties, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/support/TestProfile.java, status: generated }
+      - { path: url-shortener/src/test/resources/application-test.properties, status: generated }
+    rationale: >
+      Engineer-asserted. Toolchain, skeleton, custom instructions, policy, playbooks, scripts,
+      harness-check and the documentation set were drafted by the assistant from the design document
+      and kept as drafted after review against sections 2.2, 3.1, 3.9, 4.1, 5.2 and 5.9. No file was
+      hand-edited before commit; every change after the first draft was a fix driven by a red gate
+      and is listed under debug. Pinned coordinates verified on Maven Central on 2026-10-12:
+      https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-starter-parent/4.1.1/,
+      https://repo1.maven.org/maven2/org/springdoc/springdoc-openapi-starter-webmvc-ui/3.1.1/,
+      https://repo1.maven.org/maven2/com/bucket4j/bucket4j_jdk17-core/8.21.0/,
+      https://repo1.maven.org/maven2/org/hdrhistogram/HdrHistogram/2.2.2/. The prompt file is a
+      reconstruction because the harness did not exist before this task; stated in the file.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "Spotless fails on every file with InvocationTargetException because google-java-format needs jdk.compiler exports on JDK 21", finding: "partly confirmed. Running the formatter jar directly without exports gives IllegalAccessError on com.sun.tools.javac.util; with exports it still fails with NoClassDefFoundError org/commonmark/parser/Parser, a dependency new in 1.37.0 that the Spotless 3.10.4 step does not load", fix: "keep .mvn/jvm.config with the six exports and pin google-java-format to 1.36.1, the version Spotless 3.10.4 ships" }
+      - { hypothesis: "ProblemDetails.toMap is safe for any ProblemDetail", finding: "refuted by ProblemDetailsTest. ProblemDetail.forStatus leaves type null, NullPointerException at toMap", fix: "default the type to about:blank as RFC 9457 specifies and read each getter once into a local" }
+      - { hypothesis: "a bare ProblemDetail has no title", finding: "refuted. Spring fills title with the reason phrase; the test expectation was wrong", fix: "assert type, title, status and document the behaviour in the test" }
+      - { hypothesis: "branch coverage 0.50 on the skeleton is a threshold problem", finding: "confirmed as a test gap, not a threshold problem. hasBaseUrl and the null branches of toMap had no tests", fix: "added AppPropertiesTest and the toMap tests; ratio 0.75, no threshold changed" }
+      - { hypothesis: "SpotBugs is clean on the skeleton", finding: "refuted. Three NP_NULL_ON_SOME_PATH from calling nullable getters twice, one EI_EXPOSE_REP2 on constructor injection, three SPRING_CSRF_PROTECTION_DISABLED", fix: "locals for the getters; reasoned exclusions for EI_EXPOSE_REP2 and the deliberate CSRF disable in config/spotbugs/exclude.xml" }
+      - { hypothesis: "the first CI run on the baseline fails on Windows because the runner differs from the laptop", finding: "refuted. harness-check HC-12 flagged T-101 and T-102, planned tasks whose impact-analysis file is not written yet; the rule ran on CI because the baseline tag existed there", fix: "HC-12 applies to done tasks only; synthetic test hc12_ignoresPlannedTasksWhoseAnalysisDoesNotExistYet added" }
+      - { hypothesis: "the Ubuntu runner fails for the same reason as Windows", finding: "refuted. Exit code 126: mvnw was committed from Windows without the executable bit", fix: "git update-index --chmod=+x mvnw" }
+      - { hypothesis: "a task can be marked done before its gate run", finding: "refuted by the first gate run of T-000: HC-04 fails inside the run that would produce the passing record", fix: "lifecycle order fixed to gate, then done, then commit; verify-1.log kept as the red run; documented in docs/execution-approach.md" }
+    reviewer: Harshil
+    started_at: 2026-10-12T01:00:00Z
+    finished_at: 2026-10-12T02:40:00Z
+  - task: T-001
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-001/v1.md
+    raw_output: harness/evidence/T-001/ai-raw.patch
+    files:
+      - { path: config/checkstyle/checkstyle.xml, status: generated }
+      - { path: config/checkstyle/suppressions.xml, status: generated }
+      - { path: config/spotbugs/exclude.xml, status: generated }
+      - { path: .github/workflows/ci.yml, status: generated }
+      - { path: .github/dependabot.yml, status: generated }
+    rationale: >
+      Engineer-asserted. Checkstyle configuration derived by script from the google_checks.xml shipped
+      with Checkstyle 14.3.0 so the base is byte-identical to upstream and every project addition is
+      marked; suppressions and SpotBugs exclusions each carry a reason; CI matrix and Dependabot as
+      designed. Kept as drafted. The gate plugin sections live in the poms recorded under T-000. Each
+      gate was observed failing for a real cause in the T-000 pre-gate logs before it was accepted:
+      formatting (runs 1 and 2), coverage (run 6), SpotBugs with FindSecBugs (run 7).
+    rejected_notes: []
+    debug:
+      - { hypothesis: "the no-field-injection regex can be written on one line", finding: "the annotation and the field sit on different lines, so RegexpSingleline cannot see both", fix: "RegexpMultiline matching @Autowired followed by a declaration line ending in a semicolon and containing no parenthesis" }
+      - { hypothesis: "google_checks AbbreviationAsWordInName accepts test names ending in IT", finding: "refuted. allowedAbbreviationLength 0 flags two consecutive capitals", fix: "allowedAbbreviationLength 1 for the project" }
+    reviewer: Harshil
+    started_at: 2026-10-12T01:30:00Z
+    finished_at: 2026-10-12T02:45:00Z
+  - task: T-201
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts: []
+    files:
+      - { path: harness/requirements/R-03.md, status: edited }
+      - { path: harness/tasks/T-202.yaml, status: edited }
+    rationale: >
+      Engineer-asserted. Document-only task. The assistant listed the candidate dimensions with their
+      storage, privacy and cost implications; the engineer, playing the stakeholder as the design
+      assumes, answered the three dated questions and chose the slice. Both files were edited by hand
+      from the option list: geography and device were removed from scope because they need IP or
+      user-agent data that ADR 0006 forbids; the full referrer URL was reduced to its host.
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T01:15:00Z
+    finished_at: 2026-10-12T02:50:00Z
+gates:
+  - task: T-000
+    commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
+    tree: dirty
+    run_at: "2026-10-12T02:19:34Z"
+    overall: fail
+    results:
+      format: not-reached
+      style: not-reached
+      sast: not-reached
+      tests: not-reached
+      coverage: not-reached
+      traceability: fail
+      secrets: not-reached
+      perf: "skipped: opt-in profile not run"
+    failed_goal: "org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test on project harness-check"
+    log: harness/evidence/T-000/verify-1.log
+  - task: T-001
+    commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
+    tree: dirty
+    run_at: "2026-10-12T02:21:12Z"
+    overall: fail
+    results:
+      format: not-reached
+      style: not-reached
+      sast: not-reached
+      tests: not-reached
+      coverage: not-reached
+      traceability: fail
+      secrets: not-reached
+      perf: "skipped: opt-in profile not run"
+    failed_goal: "org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test on project harness-check"
+    log: harness/evidence/T-001/verify-1.log
+  - task: T-000
+    commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
+    tree: dirty
+    run_at: "2026-10-12T02:23:57Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-000/verify-2.log
+  - task: T-001
+    commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
+    tree: dirty
+    run_at: "2026-10-12T02:25:16Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-001/verify-2.log
+  - task: T-201
+    commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
+    tree: dirty
+    run_at: "2026-10-12T02:26:29Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-201/verify-1.log
+signoffs:
+  - task: T-000
+    reasons: [dependency]
+    review: harness/reviews/T-000.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T02:42:00Z
+    statement: >
+      Reactor, module poms and wrapper reviewed against design sections 2.2, 3.1 and 4.1; the four
+      pinned coordinates checked on Maven Central; prod profile confirmed to fail without APP_API_KEY.
+  - task: T-001
+    reasons: [dependency]
+    review: harness/reviews/T-001.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T02:47:00Z
+    statement: >
+      Gate configuration reviewed against design section 4.1; each gate seen failing for a real cause
+      in the pre-gate logs; every SpotBugs exclusion carries a reason and a re-enable condition.

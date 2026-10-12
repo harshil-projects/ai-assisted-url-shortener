@@ -1,0 +1,66 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor)                                [pom]
+[INFO] url-shortener                                                      [jar]
+[INFO] 
+[INFO] ----------< dev.harshil.shortener:ai-assisted-url-shortener >-----------
+[INFO] Building AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT        [1/2]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ ai-assisted-url-shortener ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ ai-assisted-url-shortener ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ ai-assisted-url-shortener ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\target\\jacoco.exec
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ ai-assisted-url-shortener ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ ai-assisted-url-shortener ---
+[INFO] Skipping JaCoCo execution due to missing execution data file.
+[INFO] 
+[INFO] ----------------< dev.harshil.shortener:url-shortener >-----------------
+[INFO] Building url-shortener 0.1.0-SNAPSHOT                              [2/2]
+[INFO]   from url-shortener\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ url-shortener ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ url-shortener ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 8 files clean - 8 needs changes to be clean, 0 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor) ................ SUCCESS [ 43.968 s]
+[INFO] url-shortener ...................................... FAILURE [ 43.597 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:28 min
+[INFO] Finished at: 2026-10-12T07:13:04+05:30
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal com.diffplug.spotless:spotless-maven-plugin:3.10.4:check (spotless-check) on project url-shortener: Unable to format file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\src\main\java\dev\harshil\shortener\api\ProblemDetails.java
+[ERROR] Step 'google-java-format' found problem in 'ProblemDetails.java':
+[ERROR] ProblemDetails.java:LINE_UNDEFINED google-java-format(java.lang.reflect.InvocationTargetException) java.lang.reflect.InvocationTargetException (...)
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :url-shortener

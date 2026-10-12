@@ -199,6 +199,8 @@ Custom instructions: `AGENTS.md` is the single source under 150 lines with setup
 | Docs touched by the change updated in the same task | Diff |
 | Harness check clean | Build |
 
+Order matters. A task stays `in-progress` while its gate runs; it is set to `done` only after a gate record with `overall: pass` exists, and the commit follows. Marking a task done first makes HC-04 fail inside the very run that would produce the record. This was learned on T-000: the first gate run (`harness/evidence/T-000/verify-1.log`) is red for exactly that reason and is kept as evidence.
+
 ## Git conventions
 
 | Rule | Detail |
