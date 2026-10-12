@@ -172,6 +172,32 @@ Logical services:
 
 The service is one deployable, but its endpoints form four logical services with different traffic shapes and protection. The code is organised along the same lines (section 3.2) and the companion diagram page shows the same split.
 
+```mermaid
+flowchart LR
+  subgraph Clients
+    API[API client<br/>marketing tool, script]
+    Browser[Browser<br/>anyone clicking a short link]
+  end
+  subgraph Service[url-shortener, one JVM today]
+    W[Write path<br/>POST /api/v1/links<br/>validate, allocate code, insert, 201]
+    M[Management and analytics<br/>GET and DELETE /api/v1/links/code<br/>GET /api/v1/links/code/stats]
+    R[Read path, hot<br/>GET and HEAD /code<br/>lookup, 302 / 404 / 410, emit click]
+    C[Click recorder<br/>async, bounded queue<br/>one INSERT per click with attribution]
+    P[Platform<br/>actuator health, info, metrics, prometheus<br/>OpenAPI document, Swagger UI]
+  end
+  DB[(Store<br/>links: code UNIQUE, expires_at<br/>click_events: link_id, time, attribution<br/>H2 now, PostgreSQL later)]
+  API -->|X-API-Key| W
+  API -->|X-API-Key| M
+  Browser -->|public| R
+  R -. immutable event .-> C
+  W -->|INSERT link, own tx| DB
+  M -->|SELECT, aggregate, DELETE| DB
+  R -->|SELECT by code| DB
+  C -->|INSERT click_event| DB
+```
+
+Read to write traffic is around 10 to 1, so the read path is the service to cache and replicate first; it shares nothing with the write path except the store.
+
 | Logical service | Endpoints | Main classes | Protection | Notes |
 |---|---|---|---|---|
 | Write path | `POST /api/v1/links` | `LinkController`, `LinkService`, `LinkAllocator`, `CodeGenerator`, `UrlValidator` | API key; rate limit before authentication; 16 KiB body cap | Random 7-character Base62 code or a client-supplied `customAlias`; one transaction per allocation attempt; 409 on a taken alias; optional `expiresAt` (brownfield) |
