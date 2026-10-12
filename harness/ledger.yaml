@@ -901,6 +901,38 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-003/verify-2.log
+  - task: T-002
+    commit: "c08d3afd6e1cffc9391478e219825bcffe39cac0"
+    tree: dirty
+    run_at: "2026-10-12T04:42:14Z"
+    overall: fail
+    results:
+      format: not-reached
+      style: not-reached
+      sast: not-reached
+      tests: not-reached
+      coverage: not-reached
+      traceability: fail
+      secrets: not-reached
+      perf: "skipped: opt-in profile not run"
+    failed_goal: "org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test on project harness-check"
+    log: harness/evidence/T-002/verify-4.log
+  - task: T-102
+    commit: "c08d3afd6e1cffc9391478e219825bcffe39cac0"
+    tree: dirty
+    run_at: "2026-10-12T04:44:52Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-102/verify-1.log
+signoffs:
   - task: T-000
     reasons: [dependency]
     review: harness/reviews/T-000.md
