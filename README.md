@@ -199,7 +199,9 @@ Harshil is accountable for every line in this repository. AI output was treated 
 | `docs/risks-and-limitations.md` | Risk register and limitations with the trade-off accepted for each |
 | `docs/threat-model.md` | STRIDE table with accepted risks and owners |
 | `docs/engineering-summary.md` | Final summary, including what the AI got wrong and what was rejected |
-| `docs/decisions/` | ADR 0001 to 0009 in MADR format |
+| `docs/decisions/` | ADR 0001 to 0009 in MADR format: 0001 Java 21, Spring Boot 4.1.1 and the Maven wrapper; 0002 H2 file mode with Flyway migrations; 0003 random Base62 codes with per-attempt transactions; 0004 302 redirect with no-store; 0005 click events table with asynchronous recording; 0006 no IP or user agent persisted; 0007 Spring Security API key with the rate limiter before authentication; 0008 process as code with harness-check; 0009 Task trailer and ledger provenance |
+| `harness/reviews/` | Fresh-context reviews and sign-off material: one per high-impact task, the T-101 impact analysis with the predicted file list, and `greenfield-review.md` with 30 judged defect candidates |
+| `harness/requirements/` | Requirement records R-01 to R-03 with ambiguities, EARS criteria and the dated clarification log |
 | `docs/reference/api.md`, `docs/reference/openapi.yaml` | API reference, error catalogue, committed OpenAPI 3.1 document |
 | `docs/reports/traceability.md` | Snapshot of the generated traceability report |
 | `docs/fresh-clone-transcript.md` | Timed clone, build, run, and API walkthrough on a clean profile |
