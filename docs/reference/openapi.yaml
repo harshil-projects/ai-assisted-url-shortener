@@ -1,0 +1,500 @@
+openapi: 3.1.0
+info:
+  description: "Create short links, redirect on them and read their click statistics.\
+    \ Management operations under /api/v1 require the X-API-Key header; redirects\
+    \ (GET /{code}), health probes and this document are public. Every error is an\
+    \ RFC 9457 Problem Details body (application/problem+json) whose requestId equals\
+    \ the X-Request-Id response header."
+  title: URL Shortener API
+  version: 0.1.0-SNAPSHOT
+servers:
+- description: The origin this document was served from
+  url: /
+security:
+- ApiKey: []
+paths:
+  /api/v1/links:
+    post:
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkResponse"
+          description: Link created; Location names it
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Missing or invalid API key
+          headers:
+            WWW-Authenticate:
+              description: "Challenge, always ApiKey realm=\"url-shortener\""
+              schema:
+                type: string
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Create a short link
+      tags:
+      - link-controller
+  /api/v1/links/{code}:
+    delete:
+      operationId: delete
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Missing or invalid API key
+          headers:
+            WWW-Authenticate:
+              description: "Challenge, always ApiKey realm=\"url-shortener\""
+              schema:
+                type: string
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Delete a link and its click history
+      tags:
+      - link-controller
+    get:
+      operationId: get
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkResponse"
+          description: The link
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Missing or invalid API key
+          headers:
+            WWW-Authenticate:
+              description: "Challenge, always ApiKey realm=\"url-shortener\""
+              schema:
+                type: string
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Read a link's metadata
+      tags:
+      - link-controller
+  /api/v1/links/{code}/stats:
+    get:
+      operationId: stats
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+          description: Totals and windows
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Missing or invalid API key
+          headers:
+            WWW-Authenticate:
+              description: "Challenge, always ApiKey realm=\"url-shortener\""
+              schema:
+                type: string
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Read click statistics for a link
+      tags:
+      - stats-controller
+  /{code}:
+    get:
+      operationId: redirect
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        "302":
+          description: Redirect to the stored URL; Cache-Control is no-store
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Follow a short link
+      tags:
+      - redirect-controller
+    head:
+      operationId: probe
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        "302":
+          description: Same as GET
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request validation failed; errors lists the offending fields
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Link not found
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Too many requests
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Internal error; no stack trace is exposed
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Service temporarily unavailable; the database could not be
+            reached
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: string
+      summary: Probe a short link without recording a click
+      tags:
+      - redirect-controller
+components:
+  schemas:
+    CreateLinkRequest:
+      type: object
+      properties:
+        customAlias:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{4,32}$"
+        url:
+          type: string
+          maxLength: 2048
+          minLength: 0
+      required:
+      - url
+    LinkResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        shortUrl:
+          type: string
+        url:
+          type: string
+    ProblemDetail:
+      type: object
+      description: RFC 9457 Problem Details; every error body of this service has
+        this shape.
+      properties:
+        detail:
+          type: string
+          description: Human-readable explanation of this occurrence
+        errors:
+          type: array
+          description: "Only on 400: the fields that failed validation"
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Request field that failed
+              message:
+                type: string
+                description: Why it failed
+        instance:
+          type: string
+          format: uri-reference
+          description: "Request path, when known"
+        requestId:
+          type: string
+          description: "Correlation id, equal to the X-Request-Id header"
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code
+        timestamp:
+          type: string
+          format: date-time
+          description: When the problem was produced
+        title:
+          type: string
+          description: "Short, stable summary of the type"
+        type:
+          type: string
+          format: uri-reference
+          description: "Problem type relative to the service origin, e.g. /problems/link-not-found"
+      required:
+      - status
+      - type
+    StatsResponse:
+      type: object
+      properties:
+        clicksLast24h:
+          type: integer
+          format: int64
+        clicksLast7d:
+          type: integer
+          format: int64
+        code:
+          type: string
+        lastClickedAt:
+          type: string
+          format: date-time
+        totalClicks:
+          type: integer
+          format: int64
+  securitySchemes:
+    ApiKey:
+      description: "Shared API key. Required on /api/v1/** and, in production, on\
+        \ the actuator endpoints other than health."
+      in: header
+      name: X-API-Key
+      type: apiKey

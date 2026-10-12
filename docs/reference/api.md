@@ -27,7 +27,7 @@ Request rules for create:
 | Field | Rule |
 |---|---|
 | `url` | Absolute, scheme `http` or `https`, non-empty host, no user info, at most 2048 characters; host must not be loopback, RFC 1918, link-local, `0.0.0.0/8`, multicast, `::1`, `fc00::/7`, `fe80::/10`, `169.254.169.254`, `localhost`, or `metadata.google.internal`; scheme and host are lowercased; no DNS resolution |
-| `customAlias` | Optional; `^[A-Za-z0-9_-]{4,32}$`, case-sensitive; must not be in the reserved list (`api`, `actuator`, `health`, `metrics`, `prometheus`, `swagger-ui`, `v3`, `api-docs`, `error`, `favicon.ico`, `robots.txt`, `.well-known`, `static`, `assets`, `stats`, `admin`, `login`) |
+| `customAlias` | Optional; `^[A-Za-z0-9_-]{4,32}$`, case-sensitive; must not be in the reserved list (`api`, `actuator`, `health`, `metrics`, `prometheus`, `swagger-ui`, `v3`, `api-docs`, `error`, `favicon.ico`, `robots.txt`, `.well-known`, `static`, `assets`, `stats`, `admin`, `login`, `h2-console`); numeric shorthand hosts such as `2130706433` or `0x7f000001` are rejected because browsers resolve them to addresses the block list would otherwise miss |
 | `expiresAt` | Optional; RFC 3339 timestamp with an offset; must be in the future; zoneless strings are rejected |
 
 ## Response records
@@ -64,7 +64,7 @@ Type URIs are relative to the service base URL. Every body carries `requestId` a
 |---|---|---|---|---|
 | `/problems/validation-failed` | Request validation failed | 400 | Bean Validation or URL rules fail; `errors[]` lists fields | handler |
 | `/problems/unauthorized` | Missing or invalid API key | 401 | `X-API-Key` absent or wrong | entry point via `ProblemWriter` |
-| `/problems/link-not-found` | Link not found | 404 | Unknown code | handler |
+| `/problems/link-not-found` | Link not found | 404 | Unknown code, or a path no controller serves ("No resource at this path") | handler |
 | `/problems/method-not-allowed` | Method not allowed | 405 | Wrong verb | handler |
 | `/problems/alias-taken` | Alias already in use | 409 | Custom alias exists, including a lost race on the unique constraint | handler |
 | `/problems/link-expired` | Link has expired | 410 | `expiresAt` in the past | handler |
