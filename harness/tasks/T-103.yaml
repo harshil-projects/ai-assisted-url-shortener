@@ -4,7 +4,7 @@ requirement: R-02
 activities: [test-gen, document]
 impact: normal
 impact_reasons: []
-status: todo
+status: in-progress
 depends_on: [T-102]
 intent: >
   Tighten the test suite around expiry with an edge-case table and bring the API reference,
