@@ -1,0 +1,2110 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java b/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java
+new file mode 100644
+index 0000000..06cb220
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java
+@@ -0,0 +1,305 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.domain.AliasTakenException;
++import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.domain.LogSanitizer;
++import dev.harshil.shortener.domain.UrlValidationException;
++import dev.harshil.shortener.domain.UrlValidationException.FieldError;
++import java.net.URI;
++import java.util.Comparator;
++import java.util.List;
++import java.util.Map;
++import org.jspecify.annotations.Nullable;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.slf4j.MDC;
++import org.springframework.dao.DataAccessException;
++import org.springframework.dao.DataAccessResourceFailureException;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.HttpStatusCode;
++import org.springframework.http.MediaType;
++import org.springframework.http.ProblemDetail;
++import org.springframework.http.ResponseEntity;
++import org.springframework.http.converter.HttpMessageNotReadableException;
++import org.springframework.jdbc.CannotGetJdbcConnectionException;
++import org.springframework.web.ErrorResponse;
++import org.springframework.web.HttpMediaTypeNotSupportedException;
++import org.springframework.web.HttpRequestMethodNotSupportedException;
++import org.springframework.web.bind.MethodArgumentNotValidException;
++import org.springframework.web.bind.annotation.ExceptionHandler;
++import org.springframework.web.bind.annotation.RestControllerAdvice;
++import org.springframework.web.context.request.WebRequest;
++import org.springframework.web.servlet.NoHandlerFoundException;
++import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
++import org.springframework.web.servlet.resource.NoResourceFoundException;
++
++/**
++ * The single place that turns an exception into an RFC 9457 body for controller requests (design
++ * 3.4). Each domain exception maps to exactly one problem type; framework exceptions are mapped by
++ * overriding the {@link ResponseEntityExceptionHandler} hooks so the body shape, including {@code
++ * requestId} and {@code timestamp}, is identical to the one the filters write through {@code
++ * ProblemWriter}. Details are fixed sentences chosen here: a parser or driver message never reaches
++ * a client, and the full exception is logged server-side with the request id instead.
++ */
++@RestControllerAdvice
++public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
++
++  static final String ERRORS = "errors";
++  static final String VALIDATION_TITLE = "Request validation failed";
++  static final String VALIDATION_DETAIL = "One or more fields are invalid";
++  static final String UNREADABLE = "Request body is missing or is not valid JSON";
++  static final String NO_RESOURCE = "No resource at this path";
++  static final String UNEXPECTED = "Unexpected error";
++  static final String RETRY_AFTER_SECONDS = "5";
++
++  private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
++
++  /**
++   * URL and alias rules: 400 with the field list.
++   *
++   * @param ex the violations
++   * @return the problem response
++   */
++  @ExceptionHandler(UrlValidationException.class)
++  public ResponseEntity<ProblemDetail> handleUrlValidation(UrlValidationException ex) {
++    return respond(validationFailed(ex.getErrors()));
++  }
++
++  /**
++   * Unknown code: 404.
++   *
++   * @param ex the lookup failure
++   * @return the problem response
++   */
++  @ExceptionHandler(LinkNotFoundException.class)
++  public ResponseEntity<ProblemDetail> handleLinkNotFound(LinkNotFoundException ex) {
++    return respond(
++        ProblemDetails.of(
++            HttpStatus.NOT_FOUND, ProblemTypes.LINK_NOT_FOUND, "Link not found", ex.getMessage()));
++  }
++
++  /**
++   * Alias already stored, including a lost race on the unique constraint: 409.
++   *
++   * @param ex the conflict
++   * @return the problem response
++   */
++  @ExceptionHandler(AliasTakenException.class)
++  public ResponseEntity<ProblemDetail> handleAliasTaken(AliasTakenException ex) {
++    return respond(
++        ProblemDetails.of(
++            HttpStatus.CONFLICT,
++            ProblemTypes.ALIAS_TAKEN,
++            "Alias already in use",
++            ex.getMessage()));
++  }
++
++  /**
++   * Five random collisions in a row: 500 with a dedicated type so operators can alert on it.
++   *
++   * @param ex the exhaustion
++   * @return the problem response
++   */
++  @ExceptionHandler(CodeGenerationExhaustedException.class)
++  public ResponseEntity<ProblemDetail> handleCodeGenerationExhausted(
++      CodeGenerationExhaustedException ex) {
++    log.error(
++        "Code generation exhausted after {} attempts; requestId={}", ex.getAttempts(), requestId());
++    return respond(
++        ProblemDetails.of(
++            HttpStatus.INTERNAL_SERVER_ERROR,
++            ProblemTypes.CODE_GENERATION_EXHAUSTED,
++            "Could not allocate a unique code",
++            "No unique code could be allocated; retry the request"));
++  }
++
++  /**
++   * Database unreachable: 503 with {@code Retry-After} so well-behaved clients back off.
++   *
++   * @param ex the connection failure
++   * @return the problem response
++   */
++  @ExceptionHandler({
++    DataAccessResourceFailureException.class,
++    CannotGetJdbcConnectionException.class
++  })
++  public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(DataAccessException ex) {
++    log.error("Database unavailable; requestId={}", requestId(), ex);
++    HttpHeaders headers = new HttpHeaders();
++    headers.set(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
++    return respond(
++        ProblemDetails.of(
++            HttpStatus.SERVICE_UNAVAILABLE,
++            ProblemTypes.SERVICE_UNAVAILABLE,
++            "Service temporarily unavailable",
++            "The database is not reachable; retry in a few seconds"),
++        headers);
++  }
++
++  /**
++   * Anything not mapped above: 500 {@code about:blank} with a fixed detail. The exception, with its
++   * stack trace, goes to the log together with the request id so the two can be correlated.
++   *
++   * @param ex the unexpected failure
++   * @return the problem response
++   */
++  @ExceptionHandler(Exception.class)
++  public ResponseEntity<ProblemDetail> handleUnexpected(Exception ex) {
++    log.error("Unhandled exception; requestId={}", requestId(), ex);
++    return respond(
++        ProblemDetails.of(
++            HttpStatus.INTERNAL_SERVER_ERROR,
++            ProblemTypes.ABOUT_BLANK,
++            "Internal error",
++            UNEXPECTED));
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleMethodArgumentNotValid(
++      MethodArgumentNotValidException ex,
++      HttpHeaders headers,
++      HttpStatusCode status,
++      WebRequest request) {
++    List<FieldError> errors =
++        ex.getBindingResult().getFieldErrors().stream()
++            .sorted(Comparator.comparing(error -> error.getField()))
++            .map(error -> new FieldError(error.getField(), messageOf(error.getDefaultMessage())))
++            .toList();
++    return handleExceptionInternal(ex, validationFailed(errors), headers, status, request);
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleHttpMessageNotReadable(
++      HttpMessageNotReadableException ex,
++      HttpHeaders headers,
++      HttpStatusCode status,
++      WebRequest request) {
++    ProblemDetail problem =
++        ProblemDetails.of(status, ProblemTypes.VALIDATION_FAILED, VALIDATION_TITLE, UNREADABLE);
++    problem.setProperty(ERRORS, List.of());
++    return handleExceptionInternal(ex, problem, headers, status, request);
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleHttpMediaTypeNotSupported(
++      HttpMediaTypeNotSupportedException ex,
++      HttpHeaders headers,
++      HttpStatusCode status,
++      WebRequest request) {
++    ProblemDetail problem =
++        ProblemDetails.of(
++            status,
++            ProblemTypes.UNSUPPORTED_MEDIA_TYPE,
++            "Unsupported media type",
++            "Request body must be application/json");
++    return handleExceptionInternal(ex, problem, headers, status, request);
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleHttpRequestMethodNotSupported(
++      HttpRequestMethodNotSupportedException ex,
++      HttpHeaders headers,
++      HttpStatusCode status,
++      WebRequest request) {
++    ProblemDetail problem =
++        ProblemDetails.of(
++            status,
++            ProblemTypes.METHOD_NOT_ALLOWED,
++            "Method not allowed",
++            "The HTTP method is not supported at this path");
++    return handleExceptionInternal(ex, problem, headers, status, request);
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleNoResourceFoundException(
++      NoResourceFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
++    return handleExceptionInternal(ex, noResource(status), headers, status, request);
++  }
++
++  @Override
++  protected ResponseEntity<Object> handleNoHandlerFoundException(
++      NoHandlerFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
++    return handleExceptionInternal(ex, noResource(status), headers, status, request);
++  }
++
++  /**
++   * Final hop for every framework exception. Bodies built here already carry the two standard
++   * members; bodies built by the framework for exceptions not overridden above are rebuilt through
++   * {@link ProblemDetails#of} so they get them too, and the content type is always {@code
++   * application/problem+json}.
++   */
++  @Override
++  protected ResponseEntity<Object> handleExceptionInternal(
++      Exception ex,
++      @Nullable Object body,
++      HttpHeaders headers,
++      HttpStatusCode status,
++      WebRequest request) {
++    ProblemDetail problem =
++        body instanceof ProblemDetail detail ? detail : frameworkBody(ex, status);
++    HttpHeaders problemHeaders = HttpHeaders.copyOf(headers);
++    problemHeaders.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
++    return super.handleExceptionInternal(
++        ex, standardised(problem, status), problemHeaders, status, request);
++  }
++
++  private static ProblemDetail frameworkBody(Exception ex, HttpStatusCode status) {
++    return ex instanceof ErrorResponse response
++        ? response.getBody()
++        : ProblemDetail.forStatus(status);
++  }
++
++  /** Returns the body unchanged when it already has both members, otherwise a rebuilt copy. */
++  private static ProblemDetail standardised(ProblemDetail problem, HttpStatusCode status) {
++    Map<String, Object> properties = problem.getProperties();
++    if (properties != null
++        && properties.containsKey(ProblemDetails.REQUEST_ID)
++        && properties.containsKey(ProblemDetails.TIMESTAMP)) {
++      return problem;
++    }
++    URI type = problem.getType() == null ? ProblemTypes.ABOUT_BLANK : problem.getType();
++    ProblemDetail standard =
++        ProblemDetails.of(status, type, problem.getTitle(), problem.getDetail());
++    standard.setInstance(problem.getInstance());
++    if (properties != null) {
++      properties.forEach(standard::setProperty);
++    }
++    return standard;
++  }
++
++  private static ProblemDetail noResource(HttpStatusCode status) {
++    return ProblemDetails.of(status, ProblemTypes.LINK_NOT_FOUND, "Link not found", NO_RESOURCE);
++  }
++
++  private static ProblemDetail validationFailed(List<FieldError> errors) {
++    ProblemDetail problem =
++        ProblemDetails.of(
++            HttpStatus.BAD_REQUEST,
++            ProblemTypes.VALIDATION_FAILED,
++            VALIDATION_TITLE,
++            VALIDATION_DETAIL);
++    problem.setProperty(ERRORS, errors);
++    return problem;
++  }
++
++  private static String messageOf(@Nullable String defaultMessage) {
++    return defaultMessage == null ? "is invalid" : defaultMessage;
++  }
++
++  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem) {
++    return respond(problem, new HttpHeaders());
++  }
++
++  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem, HttpHeaders headers) {
++    return ResponseEntity.status(problem.getStatus())
++        .headers(headers)
++        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
++        .body(problem);
++  }
++
++  private static String requestId() {
++    return LogSanitizer.sanitize(MDC.get(ProblemDetails.REQUEST_ID));
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java
+new file mode 100644
+index 0000000..b730c50
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java
+@@ -0,0 +1,88 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.api.dto.LinkResponse;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.service.LinkService;
++import jakarta.validation.Valid;
++import java.net.URI;
++import org.springframework.http.MediaType;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.DeleteMapping;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.PostMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RestController;
++
++/**
++ * Management API for links under {@code /api/v1/links} (design 3.3), protected by the API key.
++ *
++ * <p>The {@code code} path variable carries the same pattern as a valid alias, so a request for a
++ * code that could never exist is answered by the framework's 404 before any service or database
++ * call. Error bodies come from {@link ApiExceptionHandler}; this class only maps success.
++ */
++@RestController
++@RequestMapping("/api/v1/links")
++public class LinkController {
++
++  /** Path segment accepted as a code; mirrors {@link CreateLinkRequest#ALIAS_PATTERN}. */
++  static final String CODE_PATH = "/{code:[A-Za-z0-9_-]{4,32}}";
++
++  private static final String LOCATION_PREFIX = "/api/v1/links/";
++
++  private final LinkService links;
++  private final ShortUrlBuilder shortUrls;
++
++  /**
++   * Creates the controller.
++   *
++   * @param links link use cases
++   * @param shortUrls short URL rendering
++   */
++  public LinkController(LinkService links, ShortUrlBuilder shortUrls) {
++    this.links = links;
++    this.shortUrls = shortUrls;
++  }
++
++  /**
++   * Creates a link.
++   *
++   * @param request the JSON body
++   * @return 201 with {@code Location: /api/v1/links/{code}} and the link
++   */
++  @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
++  public ResponseEntity<LinkResponse> create(@Valid @RequestBody CreateLinkRequest request) {
++    Link link = links.create(request);
++    return ResponseEntity.created(URI.create(LOCATION_PREFIX + link.getCode()))
++        .body(toResponse(link));
++  }
++
++  /**
++   * Returns a link's metadata.
++   *
++   * @param code the short code
++   * @return 200 with the link
++   */
++  @GetMapping(CODE_PATH)
++  public LinkResponse get(@PathVariable String code) {
++    return toResponse(links.get(code));
++  }
++
++  /**
++   * Deletes a link and its click events.
++   *
++   * @param code the short code
++   * @return 204 with no body
++   */
++  @DeleteMapping(CODE_PATH)
++  public ResponseEntity<Void> delete(@PathVariable String code) {
++    links.delete(code);
++    return ResponseEntity.noContent().build();
++  }
++
++  private LinkResponse toResponse(Link link) {
++    return LinkResponse.of(link, shortUrls.shortUrl(link.getCode()));
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/ShortUrlBuilder.java b/url-shortener/src/main/java/dev/harshil/shortener/api/ShortUrlBuilder.java
+new file mode 100644
+index 0000000..4f8cb2d
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/ShortUrlBuilder.java
+@@ -0,0 +1,49 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.config.AppProperties;
++import org.springframework.stereotype.Component;
++import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
++
++/**
++ * Builds the absolute short URL for a code (design 3.3).
++ *
++ * <p>Behind a reverse proxy or on a public domain the operator sets {@code app.base-url}; when it
++ * is empty, which is the dev default, the URL is derived from the current request's scheme, host
++ * and port, so a reviewer who starts the service on another port sees values that actually work.
++ * Forwarded headers are deliberately not consulted ({@code server.forward-headers-strategy=NONE}):
++ * trusting them is a deployment decision documented in the API reference.
++ */
++@Component
++public final class ShortUrlBuilder {
++
++  private final AppProperties properties;
++
++  /**
++   * Creates the builder.
++   *
++   * @param properties application settings providing the optional base URL
++   */
++  public ShortUrlBuilder(AppProperties properties) {
++    this.properties = properties;
++  }
++
++  /**
++   * Returns the absolute short URL for a code.
++   *
++   * @param code a stored code, already restricted to {@code [A-Za-z0-9_-]} so no encoding is needed
++   * @return for example {@code https://sho.rt/abc1234}
++   */
++  public String shortUrl(String code) {
++    if (properties.hasBaseUrl()) {
++      return withoutTrailingSlash(properties.baseUrl().strip()) + "/" + code;
++    }
++    return ServletUriComponentsBuilder.fromCurrentContextPath()
++        .path("/{code}")
++        .buildAndExpand(code)
++        .toUriString();
++  }
++
++  private static String withoutTrailingSlash(String baseUrl) {
++    return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java
+new file mode 100644
+index 0000000..8c80fbd
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java
+@@ -0,0 +1,41 @@
++package dev.harshil.shortener.api.dto;
++
++import dev.harshil.shortener.service.UrlValidator;
++import jakarta.validation.constraints.NotBlank;
++import jakarta.validation.constraints.Pattern;
++import jakarta.validation.constraints.Size;
++
++/**
++ * Body of {@code POST /api/v1/links} (design 3.3).
++ *
++ * <p>Bean Validation covers presence, length and the alias shape, so a malformed request is
++ * rejected before any service code runs; the URL rules that need parsing live in {@link
++ * UrlValidator}, and the reserved-alias rule in {@code LinkService}, because both produce
++ * domain-specific messages. Components are reference types so an absent member is a clear
++ * validation error rather than a generic parse failure (design 4.3).
++ *
++ * @param url the target URL, absolute {@code http} or {@code https}, at most 2048 characters
++ * @param customAlias optional caller-chosen code, 4 to 32 characters of {@code [A-Za-z0-9_-]};
++ *     {@code null} asks the service to generate one
++ */
++public record CreateLinkRequest(
++    @NotBlank(message = "URL is required")
++        @Size(max = UrlValidator.MAX_LENGTH, message = "URL must be at most 2048 characters")
++        String url,
++    @Pattern(
++            regexp = CreateLinkRequest.ALIAS_PATTERN,
++            message = "Alias must be 4 to 32 characters of letters, digits, underscore or hyphen")
++        String customAlias) {
++
++  /** Shape of an acceptable alias; also the path pattern every code endpoint uses. */
++  public static final String ALIAS_PATTERN = "^[A-Za-z0-9_-]{4,32}$";
++
++  /**
++   * Tells whether the caller chose an alias.
++   *
++   * @return true when {@code customAlias} is present and non-empty
++   */
++  public boolean hasCustomAlias() {
++    return customAlias != null && !customAlias.isEmpty();
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java
+new file mode 100644
+index 0000000..fdff86d
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java
+@@ -0,0 +1,27 @@
++package dev.harshil.shortener.api.dto;
++
++import dev.harshil.shortener.domain.Link;
++import java.time.Instant;
++
++/**
++ * Representation of a link returned by create and metadata requests (design 3.3).
++ *
++ * @param code the short code
++ * @param shortUrl the absolute short URL a client can hand out, built from {@code app.base-url} or
++ *     the current request
++ * @param url the canonical target URL
++ * @param createdAt when the link was created, UTC
++ */
++public record LinkResponse(String code, String shortUrl, String url, Instant createdAt) {
++
++  /**
++   * Builds the response for a stored link.
++   *
++   * @param link the entity
++   * @param shortUrl the absolute short URL for {@code link.getCode()}
++   * @return the response body
++   */
++  public static LinkResponse of(Link link, String shortUrl) {
++    return new LinkResponse(link.getCode(), shortUrl, link.getOriginalUrl(), link.getCreatedAt());
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/ClockConfig.java b/url-shortener/src/main/java/dev/harshil/shortener/config/ClockConfig.java
+new file mode 100644
+index 0000000..a1a6eed
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/ClockConfig.java
+@@ -0,0 +1,19 @@
++package dev.harshil.shortener.config;
++
++import java.time.Clock;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++
++/**
++ * Exposes the application clock as a bean so every timestamp (creation, clicks, stats windows) is
++ * taken from one injectable source. Production uses UTC; tests substitute a fixed clock and get
++ * deterministic windows instead of racing the wall clock (design 3.13).
++ */
++@Configuration(proxyBeanMethods = false)
++public class ClockConfig {
++
++  @Bean
++  Clock clock() {
++    return Clock.systemUTC();
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/AliasTakenException.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/AliasTakenException.java
+new file mode 100644
+index 0000000..112509f
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/AliasTakenException.java
+@@ -0,0 +1,36 @@
++package dev.harshil.shortener.domain;
++
++/**
++ * Raised when a requested custom alias is already a stored code, whether the fast-path existence
++ * check saw it or two requests raced and the unique constraint decided (ADR 0003). Mapped to the
++ * 409 {@code alias-taken} problem (design 3.4).
++ */
++public final class AliasTakenException extends RuntimeException {
++
++  private final String alias;
++
++  /**
++   * Creates the exception when the existence check found the alias.
++   *
++   * @param alias the alias the client asked for; it has already passed the alias pattern
++   */
++  public AliasTakenException(String alias) {
++    this(alias, null);
++  }
++
++  /**
++   * Creates the exception when the database constraint rejected the insert, keeping the original
++   * failure as the cause for diagnostics.
++   *
++   * @param alias the alias the client asked for; it has already passed the alias pattern
++   * @param cause the constraint violation, or {@code null}
++   */
++  public AliasTakenException(String alias, Throwable cause) {
++    super("Alias already in use: " + LogSanitizer.sanitize(alias), cause);
++    this.alias = alias;
++  }
++
++  public String getAlias() {
++    return alias;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/CodeGenerationExhaustedException.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/CodeGenerationExhaustedException.java
+new file mode 100644
+index 0000000..e0fc031
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/CodeGenerationExhaustedException.java
+@@ -0,0 +1,26 @@
++package dev.harshil.shortener.domain;
++
++/**
++ * Raised when every allocation attempt for a random code collided with an existing one. With a 62^7
++ * code space this is astronomically unlikely unless the table is nearly full or the random source
++ * is broken, so it is treated as a server fault: 500 {@code code-generation-exhausted} (design
++ * 3.4), and the client may simply retry.
++ */
++public final class CodeGenerationExhaustedException extends RuntimeException {
++
++  private final int attempts;
++
++  /**
++   * Creates the exception.
++   *
++   * @param attempts how many codes were tried before giving up
++   */
++  public CodeGenerationExhaustedException(int attempts) {
++    super("Could not allocate a unique code after " + attempts + " attempts");
++    this.attempts = attempts;
++  }
++
++  public int getAttempts() {
++    return attempts;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkNotFoundException.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkNotFoundException.java
+new file mode 100644
+index 0000000..224747d
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkNotFoundException.java
+@@ -0,0 +1,27 @@
++package dev.harshil.shortener.domain;
++
++/**
++ * Raised when a code does not identify a stored link. Mapped to the 404 {@code link-not-found}
++ * problem (design 3.4) by the API layer; the service layer throws it so callers never have to
++ * handle an empty {@code Optional} and the redirect, metadata, stats and delete paths share one
++ * outcome.
++ */
++public final class LinkNotFoundException extends RuntimeException {
++
++  private final String code;
++
++  /**
++   * Creates the exception for a code that was looked up and not found.
++   *
++   * @param code the code the client presented; it has already passed the path pattern, and it is
++   *     sanitised again here so the message stays safe for any log line
++   */
++  public LinkNotFoundException(String code) {
++    super("No link with code " + LogSanitizer.sanitize(code));
++    this.code = code;
++  }
++
++  public String getCode() {
++    return code;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java
+new file mode 100644
+index 0000000..f343a92
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java
+@@ -0,0 +1,47 @@
++package dev.harshil.shortener.service;
++
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.repository.LinkRepository;
++import java.time.Instant;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++/**
++ * Performs exactly one allocation attempt in its own transaction (ADR 0003, design 3.6).
++ *
++ * <p>This is a separate bean from {@code LinkService} on purpose: Spring's transaction proxy only
++ * wraps calls that cross a bean boundary, so putting the retry loop and the insert in one class
++ * would run every attempt inside one transaction, and the first constraint violation would mark it
++ * rollback-only and poison the retries. Here each call commits or rolls back on its own, and the
++ * {@code DataIntegrityViolationException} escapes the proxy to the caller, which decides whether to
++ * retry (random code) or report a conflict (custom alias).
++ */
++@Service
++public class LinkAllocator {
++
++  private final LinkRepository links;
++
++  /**
++   * Creates the allocator.
++   *
++   * @param links link persistence
++   */
++  public LinkAllocator(LinkRepository links) {
++    this.links = links;
++  }
++
++  /**
++   * Inserts one link and commits.
++   *
++   * @param code the code to claim
++   * @param url the canonical target URL
++   * @param now the creation instant
++   * @return the persisted link with its identifier
++   * @throws org.springframework.dao.DataIntegrityViolationException when {@code code} is already
++   *     stored; the message names the {@code uk_links_code} constraint
++   */
++  @Transactional
++  public Link insert(String code, String url, Instant now) {
++    return links.saveAndFlush(new Link(code, url, now));
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java
+new file mode 100644
+index 0000000..bc24fa6
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java
+@@ -0,0 +1,189 @@
++package dev.harshil.shortener.service;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.domain.AliasTakenException;
++import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.domain.LogSanitizer;
++import dev.harshil.shortener.domain.ReservedWords;
++import dev.harshil.shortener.domain.UrlValidationException;
++import dev.harshil.shortener.repository.LinkRepository;
++import io.micrometer.core.instrument.Counter;
++import io.micrometer.core.instrument.MeterRegistry;
++import java.net.URI;
++import java.time.Clock;
++import java.time.Instant;
++import java.util.Locale;
++import java.util.regex.Pattern;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.dao.DataIntegrityViolationException;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++/**
++ * Creates, resolves and deletes links (design 3.6).
++ *
++ * <p>{@link #create} is deliberately not transactional: validation and the retry loop run outside
++ * any transaction and each insert attempt is delegated to {@link LinkAllocator}, so a collision
++ * costs one small rolled-back transaction rather than poisoning the request. The database's unique
++ * constraint is the only arbiter of code uniqueness; there is no in-memory locking (design 3.10).
++ */
++@Service
++public class LinkService {
++
++  /** Random allocation attempts before the request is reported as a server fault. */
++  static final int MAX_ATTEMPTS = 5;
++
++  static final String ALIAS_FIELD = "customAlias";
++  static final String MSG_ALIAS_RESERVED = "Alias is reserved";
++  static final String MSG_ALIAS_SHAPE =
++      "Alias must be 4 to 32 characters of letters, digits, underscore or hyphen";
++  static final String LINKS_CREATED_METRIC = "shortener.links.created";
++
++  private static final Logger log = LoggerFactory.getLogger(LinkService.class);
++  private static final String CODE_CONSTRAINT = "uk_links_code";
++  private static final Pattern ALIAS = Pattern.compile(CreateLinkRequest.ALIAS_PATTERN);
++
++  private final LinkRepository links;
++  private final LinkAllocator allocator;
++  private final CodeGenerator generator;
++  private final UrlValidator urlValidator;
++  private final Clock clock;
++  private final Counter linksCreated;
++
++  /**
++   * Creates the service.
++   *
++   * @param links link persistence
++   * @param allocator one-transaction-per-attempt inserter
++   * @param generator random code source
++   * @param urlValidator URL rules
++   * @param clock application clock
++   * @param registry metrics registry for {@code shortener.links.created}
++   */
++  public LinkService(
++      LinkRepository links,
++      LinkAllocator allocator,
++      CodeGenerator generator,
++      UrlValidator urlValidator,
++      Clock clock,
++      MeterRegistry registry) {
++    this.links = links;
++    this.allocator = allocator;
++    this.generator = generator;
++    this.urlValidator = urlValidator;
++    this.clock = clock;
++    this.linksCreated = registry.counter(LINKS_CREATED_METRIC);
++  }
++
++  /**
++   * Validates the request and stores a new link.
++   *
++   * @param request the client's URL and optional alias, already past Bean Validation
++   * @return the stored link
++   * @throws UrlValidationException when the URL breaks a rule or the alias is reserved
++   * @throws AliasTakenException when the alias is already a stored code
++   * @throws CodeGenerationExhaustedException when {@value #MAX_ATTEMPTS} random codes collided
++   */
++  public Link create(CreateLinkRequest request) {
++    String url = urlValidator.validate(request.url());
++    Instant now = clock.instant();
++    Link link =
++        request.hasCustomAlias()
++            ? allocateAlias(request.customAlias(), url, now)
++            : allocateRandom(url, now);
++    linksCreated.increment();
++    log.info(
++        "Created link code={} host={}",
++        LogSanitizer.sanitize(link.getCode()),
++        LogSanitizer.sanitize(URI.create(url).getHost()));
++    return link;
++  }
++
++  /**
++   * Finds the link a redirect should follow.
++   *
++   * @param code the code from the path
++   * @return the link
++   * @throws LinkNotFoundException when no link has that code
++   */
++  public Link resolve(String code) {
++    return links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
++  }
++
++  /**
++   * Finds a link for the management API. Today this is the same lookup as {@link #resolve}; the two
++   * names exist so the redirect path can later diverge (for example, to report expiry) without
++   * changing how metadata is read.
++   *
++   * @param code the code from the path
++   * @return the link
++   * @throws LinkNotFoundException when no link has that code
++   */
++  public Link get(String code) {
++    return resolve(code);
++  }
++
++  /**
++   * Hard-deletes a link; the database cascade removes its click events (ADR 0005).
++   *
++   * @param code the code from the path
++   * @throws LinkNotFoundException when nothing was deleted
++   */
++  @Transactional
++  public void delete(String code) {
++    if (links.deleteByCode(code) == 0) {
++      throw new LinkNotFoundException(code);
++    }
++  }
++
++  private Link allocateAlias(String alias, String url, Instant now) {
++    if (!ALIAS.matcher(alias).matches()) {
++      throw UrlValidationException.of(ALIAS_FIELD, MSG_ALIAS_SHAPE);
++    }
++    if (ReservedWords.isReserved(alias)) {
++      throw UrlValidationException.of(ALIAS_FIELD, MSG_ALIAS_RESERVED);
++    }
++    if (links.existsByCode(alias)) {
++      throw new AliasTakenException(alias);
++    }
++    try {
++      return allocator.insert(alias, url, now);
++    } catch (DataIntegrityViolationException e) {
++      if (isCodeCollision(e)) {
++        throw new AliasTakenException(alias, e);
++      }
++      throw e;
++    }
++  }
++
++  private Link allocateRandom(String url, Instant now) {
++    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
++      String code = generator.next();
++      try {
++        return allocator.insert(code, url, now);
++      } catch (DataIntegrityViolationException e) {
++        if (!isCodeCollision(e)) {
++          throw e;
++        }
++        log.warn("Random code collided on attempt {} of {}", attempt, MAX_ATTEMPTS);
++      }
++    }
++    throw new CodeGenerationExhaustedException(MAX_ATTEMPTS);
++  }
++
++  /**
++   * Only a violation of the code's unique constraint is a collision; any other integrity failure is
++   * a genuine fault and must not be retried or disguised as a conflict.
++   */
++  private static boolean isCodeCollision(DataIntegrityViolationException e) {
++    return mentionsCodeConstraint(e.getMessage())
++        || mentionsCodeConstraint(e.getMostSpecificCause().getMessage());
++  }
++
++  private static boolean mentionsCodeConstraint(String message) {
++    return message != null && message.toLowerCase(Locale.ROOT).contains(CODE_CONSTRAINT);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java
+new file mode 100644
+index 0000000..7b02271
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java
+@@ -0,0 +1,255 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.domain.AliasTakenException;
++import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.domain.UrlValidationException;
++import java.net.URI;
++import java.util.List;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.MethodSource;
++import org.slf4j.MDC;
++import org.springframework.core.MethodParameter;
++import org.springframework.dao.DataAccessException;
++import org.springframework.dao.DataAccessResourceFailureException;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpMethod;
++import org.springframework.http.MediaType;
++import org.springframework.http.ProblemDetail;
++import org.springframework.http.ResponseEntity;
++import org.springframework.http.converter.HttpMessageNotReadableException;
++import org.springframework.jdbc.CannotGetJdbcConnectionException;
++import org.springframework.mock.http.MockHttpInputMessage;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.validation.BeanPropertyBindingResult;
++import org.springframework.validation.FieldError;
++import org.springframework.web.HttpMediaTypeNotSupportedException;
++import org.springframework.web.HttpRequestMethodNotSupportedException;
++import org.springframework.web.bind.MethodArgumentNotValidException;
++import org.springframework.web.bind.MissingServletRequestParameterException;
++import org.springframework.web.context.request.ServletWebRequest;
++import org.springframework.web.context.request.WebRequest;
++import org.springframework.web.servlet.NoHandlerFoundException;
++import org.springframework.web.servlet.resource.NoResourceFoundException;
++
++class ApiExceptionHandlerTest {
++
++  private static final String REQUEST_ID = "req-42";
++
++  private final ApiExceptionHandler handler = new ApiExceptionHandler();
++  private final WebRequest request =
++      new ServletWebRequest(new MockHttpServletRequest("GET", "/api/v1/links/abcdefg"));
++
++  @BeforeEach
++  void putRequestIdInMdc() {
++    MDC.put(ProblemDetails.REQUEST_ID, REQUEST_ID);
++  }
++
++  @AfterEach
++  void clearMdc() {
++    MDC.clear();
++  }
++
++  @Test
++  void handleLinkNotFound_mapsTo404LinkNotFoundWithStandardMembersAndProblemContentType() {
++    ResponseEntity<ProblemDetail> response =
++        handler.handleLinkNotFound(new LinkNotFoundException("abcdefg"));
++
++    assertThat(response.getStatusCode().value()).isEqualTo(404);
++    assertThat(response.getHeaders().getContentType())
++        .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
++    assertStandard(response.getBody(), ProblemTypes.LINK_NOT_FOUND, "Link not found");
++    assertThat(response.getBody().getDetail()).isEqualTo("No link with code abcdefg");
++  }
++
++  @Test
++  void handleAliasTaken_mapsTo409AliasTaken() {
++    ResponseEntity<ProblemDetail> response =
++        handler.handleAliasTaken(new AliasTakenException("my-alias"));
++
++    assertThat(response.getStatusCode().value()).isEqualTo(409);
++    assertStandard(response.getBody(), ProblemTypes.ALIAS_TAKEN, "Alias already in use");
++    assertThat(response.getBody().getDetail()).contains("my-alias");
++  }
++
++  @Test
++  void handleCodeGenerationExhausted_mapsTo500CodeGenerationExhausted() {
++    ResponseEntity<ProblemDetail> response =
++        handler.handleCodeGenerationExhausted(new CodeGenerationExhaustedException(5));
++
++    assertThat(response.getStatusCode().value()).isEqualTo(500);
++    assertStandard(
++        response.getBody(),
++        ProblemTypes.CODE_GENERATION_EXHAUSTED,
++        "Could not allocate a unique code");
++  }
++
++  @Test
++  void handleUrlValidation_mapsTo400ValidationFailedWithTheFieldErrors() {
++    UrlValidationException ex = UrlValidationException.of("url", "URL is required");
++
++    ResponseEntity<ProblemDetail> response = handler.handleUrlValidation(ex);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(400);
++    assertStandard(
++        response.getBody(), ProblemTypes.VALIDATION_FAILED, ApiExceptionHandler.VALIDATION_TITLE);
++    assertThat(response.getBody().getProperties())
++        .containsEntry(ApiExceptionHandler.ERRORS, ex.getErrors());
++  }
++
++  @ParameterizedTest
++  @MethodSource("databaseFailures")
++  void handleDatabaseUnavailable_mapsTo503ServiceUnavailableWithRetryAfterFive(
++      DataAccessException failure) {
++    ResponseEntity<ProblemDetail> response = handler.handleDatabaseUnavailable(failure);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(503);
++    assertThat(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("5");
++    assertStandard(
++        response.getBody(), ProblemTypes.SERVICE_UNAVAILABLE, "Service temporarily unavailable");
++    assertThat(response.getBody().getDetail()).doesNotContain("connection refused");
++  }
++
++  static Stream<Arguments> databaseFailures() {
++    return Stream.of(
++        Arguments.of(new DataAccessResourceFailureException("connection refused")),
++        Arguments.of(new CannotGetJdbcConnectionException("connection refused")));
++  }
++
++  @Test
++  void handleUnexpected_mapsTo500AboutBlankWithFixedDetailAndNoExceptionText() {
++    ResponseEntity<ProblemDetail> response =
++        handler.handleUnexpected(new IllegalStateException("secret internal state"));
++
++    assertThat(response.getStatusCode().value()).isEqualTo(500);
++    assertStandard(response.getBody(), ProblemTypes.ABOUT_BLANK, "Internal error");
++    assertThat(response.getBody().getDetail()).isEqualTo(ApiExceptionHandler.UNEXPECTED);
++    assertThat(response.getBody().toString()).doesNotContain("secret internal state");
++  }
++
++  @Test
++  void handleException_mediaTypeNotSupported_mapsTo415UnsupportedMediaType() throws Exception {
++    HttpMediaTypeNotSupportedException ex =
++        new HttpMediaTypeNotSupportedException(
++            MediaType.TEXT_PLAIN, List.of(MediaType.APPLICATION_JSON));
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(415);
++    assertThat(response.getHeaders().getContentType())
++        .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
++    assertStandard(
++        problem(response), ProblemTypes.UNSUPPORTED_MEDIA_TYPE, "Unsupported media type");
++  }
++
++  @Test
++  void handleException_methodNotSupported_mapsTo405AndKeepsTheAllowHeader() throws Exception {
++    HttpRequestMethodNotSupportedException ex =
++        new HttpRequestMethodNotSupportedException("PATCH", List.of("GET", "DELETE"));
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(405);
++    assertThat(response.getHeaders().getAllow())
++        .containsExactlyInAnyOrder(HttpMethod.GET, HttpMethod.DELETE);
++    assertStandard(problem(response), ProblemTypes.METHOD_NOT_ALLOWED, "Method not allowed");
++  }
++
++  @Test
++  void handleException_noResourceFound_mapsTo404LinkNotFoundWithFixedDetail() throws Exception {
++    NoResourceFoundException ex = new NoResourceFoundException(HttpMethod.GET, "favicon.ico", "");
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(404);
++    assertStandard(problem(response), ProblemTypes.LINK_NOT_FOUND, "Link not found");
++    assertThat(problem(response).getDetail()).isEqualTo(ApiExceptionHandler.NO_RESOURCE);
++  }
++
++  @Test
++  void handleException_noHandlerFound_mapsTo404LinkNotFoundWithFixedDetail() throws Exception {
++    NoHandlerFoundException ex = new NoHandlerFoundException("GET", "/nothing", new HttpHeaders());
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(404);
++    assertThat(problem(response).getDetail()).isEqualTo(ApiExceptionHandler.NO_RESOURCE);
++  }
++
++  @Test
++  void handleException_messageNotReadable_mapsTo400WithSafeDetailAndEmptyErrors() throws Exception {
++    HttpMessageNotReadableException ex =
++        new HttpMessageNotReadableException(
++            "JSON parse error: Unexpected end-of-input", new MockHttpInputMessage(new byte[0]));
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(400);
++    assertStandard(
++        problem(response), ProblemTypes.VALIDATION_FAILED, ApiExceptionHandler.VALIDATION_TITLE);
++    assertThat(problem(response).getDetail()).isEqualTo(ApiExceptionHandler.UNREADABLE);
++    assertThat(problem(response).getProperties())
++        .containsEntry(ApiExceptionHandler.ERRORS, List.of());
++  }
++
++  @Test
++  void handleException_methodArgumentNotValid_mapsTo400WithFieldErrorsSortedByField()
++      throws Exception {
++    BeanPropertyBindingResult binding =
++        new BeanPropertyBindingResult(new CreateLinkRequest("", "ab"), "createLinkRequest");
++    binding.addError(new FieldError("createLinkRequest", "url", "URL is required"));
++    binding.addError(new FieldError("createLinkRequest", "customAlias", "Alias is too short"));
++    MethodParameter parameter =
++        new MethodParameter(LinkController.class.getMethod("create", CreateLinkRequest.class), 0);
++
++    ResponseEntity<Object> response =
++        handler.handleException(new MethodArgumentNotValidException(parameter, binding), request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(400);
++    assertStandard(
++        problem(response), ProblemTypes.VALIDATION_FAILED, ApiExceptionHandler.VALIDATION_TITLE);
++    assertThat(problem(response).getProperties())
++        .containsEntry(
++            ApiExceptionHandler.ERRORS,
++            List.of(
++                new UrlValidationException.FieldError("customAlias", "Alias is too short"),
++                new UrlValidationException.FieldError("url", "URL is required")));
++  }
++
++  @Test
++  void handleException_frameworkExceptionWithoutOverride_stillGetsRequestIdAndTimestamp()
++      throws Exception {
++    MissingServletRequestParameterException ex =
++        new MissingServletRequestParameterException("q", "String");
++
++    ResponseEntity<Object> response = handler.handleException(ex, request);
++
++    assertThat(response.getStatusCode().value()).isEqualTo(400);
++    assertThat(response.getHeaders().getContentType())
++        .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
++    assertStandard(problem(response), ProblemTypes.ABOUT_BLANK, "Bad Request");
++    assertThat(problem(response).getDetail()).isEqualTo(ex.getBody().getDetail());
++  }
++
++  private static ProblemDetail problem(ResponseEntity<Object> response) {
++    assertThat(response.getBody()).isInstanceOf(ProblemDetail.class);
++    return (ProblemDetail) response.getBody();
++  }
++
++  private static void assertStandard(ProblemDetail problem, URI type, String title) {
++    assertThat(problem).isNotNull();
++    assertThat(problem.getType()).isEqualTo(type);
++    assertThat(problem.getTitle()).isEqualTo(title);
++    assertThat(problem.getProperties())
++        .containsEntry(ProblemDetails.REQUEST_ID, REQUEST_ID)
++        .containsKey(ProblemDetails.TIMESTAMP);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java
+new file mode 100644
+index 0000000..eedf16d
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java
+@@ -0,0 +1,272 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.doThrow;
++import static org.mockito.Mockito.verifyNoInteractions;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.config.SecurityConfig;
++import dev.harshil.shortener.domain.AliasTakenException;
++import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.domain.UrlValidationException;
++import dev.harshil.shortener.service.LinkService;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
++import org.springframework.context.annotation.Import;
++import org.springframework.dao.DataAccessResourceFailureException;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++import org.springframework.test.web.servlet.assertj.MockMvcTester;
++import org.springframework.test.web.servlet.assertj.MockMvcTester.MockMvcRequestBuilder;
++
++/**
++ * Web slice for the management endpoints: request mapping, validation, security and the problem
++ * bodies produced through the shared handler. The service is mocked; the real security chain runs.
++ */
++@WebMvcTest(LinkController.class)
++@Import({SecurityConfig.class, ShortUrlBuilder.class})
++@TestProfile
++class LinkControllerTest {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String LINKS = "/api/v1/links";
++  private static final Instant CREATED = Instant.parse("2026-10-12T10:00:00Z");
++  private static final Link LINK = new Link("abcdefg", "https://example.com/page", CREATED);
++
++  @Autowired private MockMvcTester mvc;
++  @MockitoBean private LinkService linkService;
++
++  @Test
++  void create_validBodyWithKey_returns201WithLocationAndLinkBody() {
++    when(linkService.create(new CreateLinkRequest("https://example.com/page", null)))
++        .thenReturn(LINK);
++
++    assertThat(post("{\"url\":\"https://example.com/page\"}"))
++        .hasStatus(HttpStatus.CREATED)
++        .hasHeader(HttpHeaders.LOCATION, LINKS + "/abcdefg")
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_JSON)
++        .bodyJson()
++        .hasPathSatisfying("$.code", code -> code.assertThat().isEqualTo("abcdefg"))
++        .hasPathSatisfying("$.url", url -> url.assertThat().isEqualTo("https://example.com/page"))
++        .hasPathSatisfying(
++            "$.shortUrl", shortUrl -> shortUrl.assertThat().isEqualTo("http://localhost/abcdefg"))
++        .hasPathSatisfying("$.createdAt", at -> at.assertThat().isEqualTo("2026-10-12T10:00:00Z"));
++  }
++
++  @Test
++  void create_blankUrl_returns400ValidationFailedWithUrlFieldError() {
++    assertThat(post("{\"url\":\"   \"}"))
++        .hasStatus(HttpStatus.BAD_REQUEST)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/validation-failed"))
++        .hasPathSatisfying("$.errors[0].field", field -> field.assertThat().isEqualTo("url"))
++        .hasPathSatisfying(
++            "$.errors[0].message", message -> message.assertThat().isEqualTo("URL is required"))
++        .hasPathSatisfying("$.timestamp", timestamp -> timestamp.assertThat().isNotNull());
++    verifyNoInteractions(linkService);
++  }
++
++  @Test
++  void create_missingUrlMember_returns400WithUrlFieldErrorNotAGenericParseFailure() {
++    assertThat(post("{\"customAlias\":\"my-alias\"}"))
++        .hasStatus(HttpStatus.BAD_REQUEST)
++        .bodyJson()
++        .hasPathSatisfying("$.errors[0].field", field -> field.assertThat().isEqualTo("url"));
++  }
++
++  @Test
++  void create_aliasFailingThePattern_returns400WithCustomAliasFieldError() {
++    assertThat(post("{\"url\":\"https://example.com/x\",\"customAlias\":\"ab\"}"))
++        .hasStatus(HttpStatus.BAD_REQUEST)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.errors[0].field", field -> field.assertThat().isEqualTo("customAlias"));
++    verifyNoInteractions(linkService);
++  }
++
++  @Test
++  void create_malformedJson_returns400ValidationFailedWithoutTheParserMessage() {
++    assertThat(post("{\"url\": "))
++        .hasStatus(HttpStatus.BAD_REQUEST)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/validation-failed"))
++        .hasPathSatisfying(
++            "$.detail", detail -> detail.assertThat().isEqualTo(ApiExceptionHandler.UNREADABLE));
++  }
++
++  @Test
++  void create_wrongContentType_returns415UnsupportedMediaTypeProblem() {
++    assertThat(
++            mvc.post()
++                .uri(LINKS)
++                .header(API_KEY_HEADER, API_KEY)
++                .contentType(MediaType.TEXT_PLAIN)
++                .content("url=https://example.com"))
++        .hasStatus(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/unsupported-media-type"))
++        .hasPathSatisfying("$.timestamp", timestamp -> timestamp.assertThat().isNotNull());
++  }
++
++  @Test
++  void create_withoutApiKey_returns401AndNeverReachesTheService() {
++    assertThat(
++            mvc.post()
++                .uri(LINKS)
++                .contentType(MediaType.APPLICATION_JSON)
++                .content("{\"url\":\"https://example.com/page\"}"))
++        .hasStatus(HttpStatus.UNAUTHORIZED)
++        .hasHeader(HttpHeaders.WWW_AUTHENTICATE, "ApiKey realm=\"url-shortener\"");
++    verifyNoInteractions(linkService);
++  }
++
++  @Test
++  void create_serviceReportsReservedAlias_returns400OnCustomAlias() {
++    when(linkService.create(any()))
++        .thenThrow(UrlValidationException.of("customAlias", "Alias is reserved"));
++
++    assertThat(post("{\"url\":\"https://example.com/x\",\"customAlias\":\"admin\"}"))
++        .hasStatus(HttpStatus.BAD_REQUEST)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.errors[0].field", field -> field.assertThat().isEqualTo("customAlias"))
++        .hasPathSatisfying(
++            "$.errors[0].message", message -> message.assertThat().isEqualTo("Alias is reserved"));
++  }
++
++  @Test
++  void create_serviceReportsAliasTaken_returns409AliasTakenProblem() {
++    when(linkService.create(any())).thenThrow(new AliasTakenException("taken"));
++
++    assertThat(post("{\"url\":\"https://example.com/x\",\"customAlias\":\"taken\"}"))
++        .hasStatus(HttpStatus.CONFLICT)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying("$.type", type -> type.assertThat().isEqualTo("/problems/alias-taken"))
++        .hasPathSatisfying("$.status", status -> status.assertThat().isEqualTo(409));
++  }
++
++  @Test
++  void create_serviceExhaustsCodes_returns500CodeGenerationExhaustedProblem() {
++    when(linkService.create(any())).thenThrow(new CodeGenerationExhaustedException(5));
++
++    assertThat(post("{\"url\":\"https://example.com/x\"}"))
++        .hasStatus(HttpStatus.INTERNAL_SERVER_ERROR)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/code-generation-exhausted"));
++  }
++
++  @Test
++  void create_databaseUnavailable_returns503WithRetryAfterFive() {
++    when(linkService.create(any()))
++        .thenThrow(new DataAccessResourceFailureException("connection refused"));
++
++    assertThat(post("{\"url\":\"https://example.com/x\"}"))
++        .hasStatus(HttpStatus.SERVICE_UNAVAILABLE)
++        .hasHeader(HttpHeaders.RETRY_AFTER, "5")
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/service-unavailable"));
++  }
++
++  @Test
++  void create_unexpectedFailure_returns500AboutBlankWithoutLeakingTheMessage() {
++    when(linkService.create(any())).thenThrow(new IllegalStateException("secret internal state"));
++
++    assertThat(post("{\"url\":\"https://example.com/x\"}"))
++        .hasStatus(HttpStatus.INTERNAL_SERVER_ERROR)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying("$.type", type -> type.assertThat().isEqualTo("about:blank"))
++        .hasPathSatisfying("$.detail", detail -> detail.assertThat().isEqualTo("Unexpected error"))
++        .doesNotHavePath("$.trace");
++  }
++
++  @Test
++  void get_knownCode_returns200WithTheLink() {
++    when(linkService.get("abcdefg")).thenReturn(LINK);
++
++    assertThat(mvc.get().uri(LINKS + "/abcdefg").header(API_KEY_HEADER, API_KEY))
++        .hasStatusOk()
++        .bodyJson()
++        .hasPathSatisfying("$.code", code -> code.assertThat().isEqualTo("abcdefg"));
++  }
++
++  @Test
++  void get_unknownCode_returns404LinkNotFoundProblem() {
++    when(linkService.get("missing")).thenThrow(new LinkNotFoundException("missing"));
++
++    assertThat(mvc.get().uri(LINKS + "/missing").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NOT_FOUND)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/link-not-found"));
++  }
++
++  @Test
++  void get_codeFailingThePathPattern_returns404WithoutCallingTheService() {
++    assertThat(mvc.get().uri(LINKS + "/ab").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NOT_FOUND)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/link-not-found"))
++        .hasPathSatisfying(
++            "$.detail", detail -> detail.assertThat().isEqualTo("No resource at this path"));
++    verifyNoInteractions(linkService);
++  }
++
++  @Test
++  void delete_knownCode_returns204WithoutBody() {
++    assertThat(mvc.delete().uri(LINKS + "/abcdefg").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NO_CONTENT)
++        .body()
++        .isEmpty();
++  }
++
++  @Test
++  void delete_unknownCode_returns404LinkNotFoundProblem() {
++    doThrow(new LinkNotFoundException("missing")).when(linkService).delete("missing");
++
++    assertThat(mvc.delete().uri(LINKS + "/missing").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NOT_FOUND)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/link-not-found"));
++  }
++
++  @Test
++  void patch_onLinkResource_returns405MethodNotAllowedProblem() {
++    assertThat(mvc.patch().uri(LINKS + "/abcdefg").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.METHOD_NOT_ALLOWED)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/method-not-allowed"));
++  }
++
++  private MockMvcRequestBuilder post(String json) {
++    return mvc.post()
++        .uri(LINKS)
++        .header(API_KEY_HEADER, API_KEY)
++        .contentType(MediaType.APPLICATION_JSON)
++        .content(json);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java
+new file mode 100644
+index 0000000..8028658
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java
+@@ -0,0 +1,233 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.api.dto.LinkResponse;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestProfile;
++import io.micrometer.core.instrument.MeterRegistry;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/** Create, read and delete links over HTTP against the full application context. */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class LinkFlowIT {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String LINKS = "/api/v1/links";
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private ClickEventRepository clickEvents;
++  @Autowired private MeterRegistry registry;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void create_validUrl_returns201WithLocationSevenCharacterCodeAndBody() {
++    create(new CreateLinkRequest("HTTPS://Example.COM/Landing?x=1", null))
++        .expectStatus()
++        .isCreated()
++        .expectHeader()
++        .valueMatches(HttpHeaders.LOCATION, LINKS + "/[A-Za-z0-9]{7}")
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
++        .expectBody()
++        .jsonPath("$.code")
++        .value(String.class, code -> assertThat(code).matches("[A-Za-z0-9]{7}"))
++        .jsonPath("$.url")
++        .isEqualTo("https://example.com/Landing?x=1")
++        .jsonPath("$.shortUrl")
++        .value(
++            String.class,
++            shortUrl -> assertThat(shortUrl).matches("http://localhost:\\d+/[A-Za-z0-9]{7}"))
++        .jsonPath("$.createdAt")
++        .exists();
++  }
++
++  @Test
++  void create_customAlias_isHonouredAsTheCode() {
++    create(new CreateLinkRequest("https://example.com/alias", "my-Alias_1"))
++        .expectStatus()
++        .isCreated()
++        .expectHeader()
++        .valueEquals(HttpHeaders.LOCATION, LINKS + "/my-Alias_1")
++        .expectBody()
++        .jsonPath("$.code")
++        .isEqualTo("my-Alias_1");
++  }
++
++  @Test
++  void create_reservedAlias_returns400ValidationFailedOnCustomAlias() {
++    create(new CreateLinkRequest("https://example.com/x", "actuator"))
++        .expectStatus()
++        .isBadRequest()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/validation-failed")
++        .jsonPath("$.errors[0].field")
++        .isEqualTo("customAlias")
++        .jsonPath("$.timestamp")
++        .exists();
++  }
++
++  @Test
++  void create_duplicateAlias_returns409AliasTaken() {
++    create(new CreateLinkRequest("https://example.com/one", "dupeAlias"))
++        .expectStatus()
++        .isCreated();
++
++    create(new CreateLinkRequest("https://example.com/two", "dupeAlias"))
++        .expectStatus()
++        .isEqualTo(409)
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/alias-taken")
++        .jsonPath("$.status")
++        .isEqualTo(409);
++  }
++
++  @Test
++  void create_invalidUrl_returns400WithUrlFieldError() {
++    create(new CreateLinkRequest("http://127.0.0.1/admin", null))
++        .expectStatus()
++        .isBadRequest()
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/validation-failed")
++        .jsonPath("$.errors[0].field")
++        .isEqualTo("url")
++        .jsonPath("$.errors[0].message")
++        .isNotEmpty();
++  }
++
++  @Test
++  void create_withoutApiKey_returns401AndStoresNothing() {
++    client
++        .post()
++        .uri(LINKS)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(new CreateLinkRequest("https://example.com/x", null))
++        .exchange()
++        .expectStatus()
++        .isUnauthorized()
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/unauthorized");
++
++    assertThat(links.count()).isZero();
++  }
++
++  @Test
++  void create_wrongContentType_returns415UnsupportedMediaType() {
++    client
++        .post()
++        .uri(LINKS)
++        .header(API_KEY_HEADER, API_KEY)
++        .contentType(MediaType.TEXT_PLAIN)
++        .body("url=https://example.com")
++        .exchange()
++        .expectStatus()
++        .isEqualTo(415)
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/unsupported-media-type")
++        .jsonPath("$.timestamp")
++        .exists();
++  }
++
++  @Test
++  void get_createdLink_returnsItsMetadata() {
++    String code = createAndReadCode("https://example.com/meta", null);
++
++    client
++        .get()
++        .uri(LINKS + "/" + code)
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.code")
++        .isEqualTo(code)
++        .jsonPath("$.url")
++        .isEqualTo("https://example.com/meta");
++  }
++
++  @Test
++  void delete_createdLink_returns204AndSubsequentGetIs404() {
++    String code = createAndReadCode("https://example.com/gone", null);
++
++    client
++        .delete()
++        .uri(LINKS + "/" + code)
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange()
++        .expectStatus()
++        .isNoContent();
++
++    client
++        .get()
++        .uri(LINKS + "/" + code)
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange()
++        .expectStatus()
++        .isNotFound()
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/link-not-found");
++  }
++
++  @Test
++  void create_success_incrementsTheLinksCreatedCounter() {
++    double before = registry.counter("shortener.links.created").count();
++
++    create(new CreateLinkRequest("https://example.com/counted", null)).expectStatus().isCreated();
++
++    assertThat(registry.counter("shortener.links.created").count()).isEqualTo(before + 1);
++  }
++
++  private RestTestClient.ResponseSpec create(CreateLinkRequest request) {
++    return client
++        .post()
++        .uri(LINKS)
++        .header(API_KEY_HEADER, API_KEY)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(request)
++        .exchange();
++  }
++
++  private String createAndReadCode(String url, String alias) {
++    LinkResponse body =
++        create(new CreateLinkRequest(url, alias))
++            .expectStatus()
++            .isCreated()
++            .expectBody(LinkResponse.class)
++            .returnResult()
++            .getResponseBody();
++    assertThat(body).isNotNull();
++    return body.code();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ShortUrlBuilderTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ShortUrlBuilderTest.java
+new file mode 100644
+index 0000000..eb6a914
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ShortUrlBuilderTest.java
+@@ -0,0 +1,70 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.config.AppProperties;
++import java.time.Duration;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.web.context.request.RequestContextHolder;
++import org.springframework.web.context.request.ServletRequestAttributes;
++
++class ShortUrlBuilderTest {
++
++  @AfterEach
++  void clearRequest() {
++    RequestContextHolder.resetRequestAttributes();
++  }
++
++  @Test
++  void shortUrl_withBaseUrlConfigured_usesItAndIgnoresTheRequest() {
++    bindRequest("http", "ignored.example", 8080);
++
++    String url = new ShortUrlBuilder(properties("https://sho.rt")).shortUrl("abc1234");
++
++    assertThat(url).isEqualTo("https://sho.rt/abc1234");
++  }
++
++  @Test
++  void shortUrl_baseUrlWithTrailingSlashOrWhitespace_doesNotDoubleTheSlash() {
++    String url = new ShortUrlBuilder(properties(" https://sho.rt/ ")).shortUrl("abc1234");
++
++    assertThat(url).isEqualTo("https://sho.rt/abc1234");
++  }
++
++  @Test
++  void shortUrl_withoutBaseUrl_usesCurrentRequestSchemeHostAndPort() {
++    bindRequest("https", "reviewer.example", 9090);
++
++    String url = new ShortUrlBuilder(properties("")).shortUrl("abc1234");
++
++    assertThat(url).isEqualTo("https://reviewer.example:9090/abc1234");
++  }
++
++  @Test
++  void shortUrl_withoutBaseUrlOnDefaultPort_omitsThePort() {
++    bindRequest("http", "localhost", 80);
++
++    String url = new ShortUrlBuilder(properties(null)).shortUrl("abc1234");
++
++    assertThat(url).isEqualTo("http://localhost/abc1234");
++  }
++
++  private static void bindRequest(String scheme, String host, int port) {
++    MockHttpServletRequest request = new MockHttpServletRequest();
++    request.setScheme(scheme);
++    request.setServerName(host);
++    request.setServerPort(port);
++    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
++  }
++
++  private static AppProperties properties(String baseUrl) {
++    return new AppProperties(
++        "key",
++        baseUrl,
++        new AppProperties.RateLimit(new AppProperties.RateLimit.Create(20, Duration.ofMinutes(1))),
++        new AppProperties.Request(16_384),
++        new AppProperties.Security(true));
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java
+new file mode 100644
+index 0000000..cf19cac
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java
+@@ -0,0 +1,82 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
++import org.springframework.context.annotation.Import;
++import org.springframework.dao.DataIntegrityViolationException;
++import org.springframework.transaction.annotation.Propagation;
++import org.springframework.transaction.annotation.Transactional;
++
++/**
++ * Runs against the real H2 schema with no surrounding test transaction, so every {@code insert}
++ * commits or rolls back exactly as it does in production and the unique constraint is the arbiter.
++ */
++@DataJpaTest
++@AutoConfigureTestDatabase(replace = Replace.NONE)
++@Import(LinkAllocator.class)
++@Transactional(propagation = Propagation.NOT_SUPPORTED)
++@TestProfile
++class LinkAllocatorTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++
++  @Autowired private LinkAllocator allocator;
++  @Autowired private LinkRepository links;
++
++  @AfterEach
++  void cleanTables() {
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void insert_newCode_commitsARowThatIsVisibleAfterTheCall() {
++    Link inserted = allocator.insert("alloc01", "https://example.com/a", NOW);
++
++    assertThat(inserted.getId()).isNotNull();
++    assertThat(links.findByCode("alloc01"))
++        .hasValueSatisfying(
++            link -> {
++              assertThat(link.getOriginalUrl()).isEqualTo("https://example.com/a");
++              assertThat(link.getCreatedAt()).isEqualTo(NOW);
++            });
++  }
++
++  @Test
++  void insert_duplicateCode_throwsDataIntegrityViolationNamingTheConstraintAndKeepsTheFirstRow() {
++    allocator.insert("dupe001", "https://example.com/first", NOW);
++
++    assertThatThrownBy(() -> allocator.insert("dupe001", "https://example.com/second", NOW))
++        .isInstanceOf(DataIntegrityViolationException.class)
++        .message()
++        .containsIgnoringCase("uk_links_code");
++
++    assertThat(links.findByCode("dupe001"))
++        .hasValueSatisfying(
++            link -> assertThat(link.getOriginalUrl()).isEqualTo("https://example.com/first"));
++    assertThat(links.count()).isEqualTo(1);
++  }
++
++  @Test
++  void insert_afterAFailedAttempt_nextCodeStillCommitsBecauseEachAttemptIsItsOwnTransaction() {
++    allocator.insert("retry01", "https://example.com/one", NOW);
++    assertThatThrownBy(() -> allocator.insert("retry01", "https://example.com/two", NOW))
++        .isInstanceOf(DataIntegrityViolationException.class);
++
++    Link second = allocator.insert("retry02", "https://example.com/two", NOW);
++
++    assertThat(second.getId()).isNotNull();
++    assertThat(links.existsByCode("retry02")).isTrue();
++    assertThat(links.count()).isEqualTo(2);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java
+new file mode 100644
+index 0000000..cc07687
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java
+@@ -0,0 +1,242 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.verifyNoInteractions;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.domain.AliasTakenException;
++import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.domain.UrlValidationException;
++import dev.harshil.shortener.domain.UrlValidationException.FieldError;
++import dev.harshil.shortener.repository.LinkRepository;
++import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
++import java.sql.SQLException;
++import java.time.Clock;
++import java.time.Instant;
++import java.time.ZoneOffset;
++import java.util.Optional;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.springframework.dao.DataIntegrityViolationException;
++
++@ExtendWith(MockitoExtension.class)
++class LinkServiceTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++  private static final String URL = "https://example.com/page";
++  private static final DataIntegrityViolationException CODE_COLLISION =
++      new DataIntegrityViolationException(
++          "could not execute statement [Unique index or primary key violation: "
++              + "\"PUBLIC.UK_LINKS_CODE_INDEX_6 ON PUBLIC.LINKS(CODE)\"]");
++
++  @Mock private LinkRepository links;
++  @Mock private LinkAllocator allocator;
++  @Mock private CodeGenerator generator;
++
++  private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
++  private LinkService service;
++
++  @BeforeEach
++  void createService() {
++    service =
++        new LinkService(
++            links,
++            allocator,
++            generator,
++            new UrlValidator(),
++            Clock.fixed(NOW, ZoneOffset.UTC),
++            registry);
++  }
++
++  @Test
++  void create_withoutAlias_validatesCanonicalisesAndInsertsGeneratedCodeOnce() {
++    when(generator.next()).thenReturn("Abc1234");
++    when(allocator.insert("Abc1234", URL, NOW)).thenReturn(new Link("Abc1234", URL, NOW));
++
++    Link created = service.create(new CreateLinkRequest("HTTPS://EXAMPLE.COM/page", null));
++
++    assertThat(created.getCode()).isEqualTo("Abc1234");
++    verify(allocator, times(1)).insert(anyString(), anyString(), any());
++    verifyNoInteractions(links);
++  }
++
++  @Test
++  void create_randomCodeCollides_retriesWithTheNextCode() {
++    when(generator.next()).thenReturn("taken01", "fresh02");
++    when(allocator.insert("taken01", URL, NOW)).thenThrow(CODE_COLLISION);
++    when(allocator.insert("fresh02", URL, NOW)).thenReturn(new Link("fresh02", URL, NOW));
++
++    Link created = service.create(new CreateLinkRequest(URL, null));
++
++    assertThat(created.getCode()).isEqualTo("fresh02");
++    verify(generator, times(2)).next();
++  }
++
++  @Test
++  void create_fiveRandomCollisions_throwsCodeGenerationExhaustedAfterExactlyFiveAttempts() {
++    when(generator.next()).thenReturn("col0001");
++    when(allocator.insert(anyString(), anyString(), any())).thenThrow(CODE_COLLISION);
++
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null)))
++        .isInstanceOf(CodeGenerationExhaustedException.class);
++
++    verify(allocator, times(LinkService.MAX_ATTEMPTS)).insert(anyString(), anyString(), any());
++    assertThat(registry.counter(LinkService.LINKS_CREATED_METRIC).count()).isZero();
++  }
++
++  @Test
++  void create_integrityViolationOnAnotherConstraint_propagatesWithoutRetry() {
++    when(generator.next()).thenReturn("code001");
++    DataIntegrityViolationException other =
++        new DataIntegrityViolationException("NULL not allowed for column \"ORIGINAL_URL\"");
++    when(allocator.insert(anyString(), anyString(), any())).thenThrow(other);
++
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null))).isSameAs(other);
++
++    verify(allocator, times(1)).insert(anyString(), anyString(), any());
++  }
++
++  @Test
++  void create_withAlias_insertsTheAliasWithoutUsingTheGenerator() {
++    when(links.existsByCode("my-alias")).thenReturn(false);
++    when(allocator.insert("my-alias", URL, NOW)).thenReturn(new Link("my-alias", URL, NOW));
++
++    Link created = service.create(new CreateLinkRequest(URL, "my-alias"));
++
++    assertThat(created.getCode()).isEqualTo("my-alias");
++    verifyNoInteractions(generator);
++  }
++
++  @Test
++  void create_reservedAlias_throwsUrlValidationOnCustomAliasBeforeTouchingTheDatabase() {
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "Admin")))
++        .isInstanceOfSatisfying(
++            UrlValidationException.class,
++            ex ->
++                assertThat(ex.getErrors())
++                    .containsExactly(
++                        new FieldError(LinkService.ALIAS_FIELD, LinkService.MSG_ALIAS_RESERVED)));
++
++    verifyNoInteractions(links, allocator, generator);
++  }
++
++  @Test
++  void create_aliasFailingThePattern_throwsUrlValidationEvenWhenBeanValidationWasBypassed() {
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "ab")))
++        .isInstanceOfSatisfying(
++            UrlValidationException.class,
++            ex ->
++                assertThat(ex.getErrors())
++                    .containsExactly(
++                        new FieldError(LinkService.ALIAS_FIELD, LinkService.MSG_ALIAS_SHAPE)));
++
++    verifyNoInteractions(links, allocator);
++  }
++
++  @Test
++  void create_aliasAlreadyStored_throwsAliasTakenWithoutAttemptingAnInsert() {
++    when(links.existsByCode("taken")).thenReturn(true);
++
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "taken")))
++        .isInstanceOf(AliasTakenException.class)
++        .hasMessageContaining("taken");
++
++    verify(allocator, never()).insert(anyString(), anyString(), any());
++  }
++
++  @Test
++  void create_aliasLosesTheRaceOnTheConstraint_mapsViolationToAliasTakenWithCause() {
++    when(links.existsByCode("raced")).thenReturn(false);
++    DataIntegrityViolationException viaCause =
++        new DataIntegrityViolationException(
++            "could not execute statement",
++            new SQLException("duplicate key value violates unique constraint \"uk_links_code\""));
++    when(allocator.insert("raced", URL, NOW)).thenThrow(viaCause);
++
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "raced")))
++        .isInstanceOf(AliasTakenException.class)
++        .hasCause(viaCause);
++  }
++
++  @Test
++  void create_aliasInsertFailsOnAnotherConstraint_propagatesTheOriginalException() {
++    when(links.existsByCode("alias1")).thenReturn(false);
++    DataIntegrityViolationException other = new DataIntegrityViolationException("check failed");
++    when(allocator.insert("alias1", URL, NOW)).thenThrow(other);
++
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "alias1"))).isSameAs(other);
++  }
++
++  @Test
++  void create_invalidUrl_throwsUrlValidationBeforeAnyCollaboratorIsCalled() {
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest("ftp://example.com/x", null)))
++        .isInstanceOf(UrlValidationException.class);
++
++    verifyNoInteractions(links, allocator, generator);
++  }
++
++  @Test
++  void create_success_incrementsTheLinksCreatedCounterOnce() {
++    when(generator.next()).thenReturn("Abc1234");
++    when(allocator.insert("Abc1234", URL, NOW)).thenReturn(new Link("Abc1234", URL, NOW));
++
++    service.create(new CreateLinkRequest(URL, null));
++
++    assertThat(registry.counter(LinkService.LINKS_CREATED_METRIC).count()).isEqualTo(1.0);
++  }
++
++  @Test
++  void resolve_knownCode_returnsTheLink() {
++    Link stored = new Link("known01", URL, NOW);
++    when(links.findByCode("known01")).thenReturn(Optional.of(stored));
++
++    assertThat(service.resolve("known01")).isSameAs(stored);
++  }
++
++  @Test
++  void resolve_unknownCode_throwsLinkNotFoundCarryingTheCode() {
++    when(links.findByCode("nothere")).thenReturn(Optional.empty());
++
++    assertThatThrownBy(() -> service.resolve("nothere"))
++        .isInstanceOfSatisfying(
++            LinkNotFoundException.class, ex -> assertThat(ex.getCode()).isEqualTo("nothere"));
++  }
++
++  @Test
++  void get_knownCode_usesTheSameSingleLookupAsResolve() {
++    Link stored = new Link("known01", URL, NOW);
++    when(links.findByCode("known01")).thenReturn(Optional.of(stored));
++
++    assertThat(service.get("known01")).isSameAs(stored);
++    verify(links, times(1)).findByCode(eq("known01"));
++  }
++
++  @Test
++  void delete_knownCode_deletesThroughTheRepository() {
++    when(links.deleteByCode("gone001")).thenReturn(1L);
++
++    service.delete("gone001");
++
++    verify(links).deleteByCode("gone001");
++  }
++
++  @Test
++  void delete_unknownCode_throwsLinkNotFound() {
++    when(links.deleteByCode("nothere")).thenReturn(0L);
++
++    assertThatThrownBy(() -> service.delete("nothere")).isInstanceOf(LinkNotFoundException.class);
++  }
++}

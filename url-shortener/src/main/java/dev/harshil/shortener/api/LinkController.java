@@ -4,8 +4,12 @@ import dev.harshil.shortener.api.dto.CreateLinkRequest;
 import dev.harshil.shortener.api.dto.LinkResponse;
 import dev.harshil.shortener.domain.Link;
 import dev.harshil.shortener.service.LinkService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -52,6 +57,9 @@ public class LinkController {
    * @param request the JSON body
    * @return 201 with {@code Location: /api/v1/links/{code}} and the link
    */
+  @Operation(summary = "Create a short link")
+  @ApiResponse(responseCode = "201", description = "Link created; Location names it")
+  @ResponseStatus(HttpStatus.CREATED)
   @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<LinkResponse> create(@Valid @RequestBody CreateLinkRequest request) {
     Link link = links.create(request);
@@ -65,21 +73,24 @@ public class LinkController {
    * @param code the short code
    * @return 200 with the link
    */
+  @Operation(summary = "Read a link's metadata")
+  @ApiResponse(responseCode = "200", description = "The link")
   @GetMapping(CODE_PATH)
   public LinkResponse get(@PathVariable String code) {
     return toResponse(links.get(code));
   }
 
   /**
-   * Deletes a link and its click events.
+   * Deletes a link and its click events; answers 204 with no body.
    *
    * @param code the short code
-   * @return 204 with no body
    */
+  @Operation(summary = "Delete a link and its click history")
+  @ApiResponse(responseCode = "204", description = "Deleted", content = @Content)
+  @ResponseStatus(HttpStatus.NO_CONTENT)
   @DeleteMapping(CODE_PATH)
-  public ResponseEntity<Void> delete(@PathVariable String code) {
+  public void delete(@PathVariable String code) {
     links.delete(code);
-    return ResponseEntity.noContent().build();
   }
 
   private LinkResponse toResponse(Link link) {
