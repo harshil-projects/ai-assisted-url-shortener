@@ -63,9 +63,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      # v2 is pinned on purpose. It is the current major that runs on a personal
-      # repository with only GITHUB_TOKEN. The design document names v3; adopt it
-      # once it is published and its inputs have been verified.
+      # v3 as named in the design. Adopted through Dependabot pull request #4 after its
+      # own run of this job passed on a personal repository with only GITHUB_TOKEN.
+      # Allowlist entries with reasons live in .gitleaks.toml at the repository root.
       - name: Scan history for secrets
         uses: gitleaks/gitleaks-action@v3
         env:
