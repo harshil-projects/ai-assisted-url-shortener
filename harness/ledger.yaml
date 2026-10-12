@@ -446,6 +446,7 @@ entries:
     debug:
       - { hypothesis: "springdoc documents the status a controller actually returns", finding: "refuted. It documented 200 for create (201), delete (204), redirect and probe (302); the status lives in the ResponseEntity at runtime, which springdoc cannot see", fix: "@ResponseStatus plus @ApiResponse on each operation; delete returns void; export regenerated and compared by OpenApiIT" }
       - { hypothesis: "the export is stable across machines", finding: "refuted in the worktree. Without a declared server springdoc writes the absolute request URL with the random test port", fix: "relative server URL in OpenApiConfig" }
+      - { hypothesis: "one shared error catalogue on every operation is a faithful contract", finding: "refuted by the fresh-context review (candidate 4). Create lacked 409, 413 and 415 while every read operation declared 400 and 429 it never produces", fix: "catalogue made per operation after the review: create carries 400, 401, 409, 413, 415, 429; management carries 401 and 404; the redirect carries 404 and 410; 500 and 503 everywhere; export regenerated" }
     reviewer: Harshil
     started_at: 2026-10-12T02:12:00Z
     finished_at: 2026-10-12T04:30:00Z
@@ -1097,6 +1098,21 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-002/verify-5.log
+  - task: T-008
+    commit: "7147c994739e3fd61f1270afe0ead1781c7daacf"
+    tree: dirty
+    run_at: "2026-10-12T06:12:12Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-008/verify-2.log
 signoffs:
   - task: T-000
     reasons: [dependency]

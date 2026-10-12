@@ -46,12 +46,24 @@ paths:
               description: "Challenge, always ApiKey realm=\"url-shortener\""
               schema:
                 type: string
-        "404":
+        "409":
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
-          description: Link not found
+          description: Alias already in use
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request body too large; the limit is 16 KiB
+        "415":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: Request body must be application/json
         "429":
           content:
             application/problem+json:
@@ -96,12 +108,6 @@ paths:
       responses:
         "204":
           description: Deleted
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Request validation failed; errors lists the offending fields
         "401":
           content:
             application/problem+json:
@@ -119,17 +125,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
           description: Link not found
-        "429":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Too many requests
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying
-              schema:
-                type: string
         "500":
           content:
             application/problem+json:
@@ -166,12 +161,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/LinkResponse"
           description: The link
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Request validation failed; errors lists the offending fields
         "401":
           content:
             application/problem+json:
@@ -189,17 +178,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
           description: Link not found
-        "429":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Too many requests
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying
-              schema:
-                type: string
         "500":
           content:
             application/problem+json:
@@ -237,12 +215,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/StatsResponse"
           description: Totals and windows
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Request validation failed; errors lists the offending fields
         "401":
           content:
             application/problem+json:
@@ -260,17 +232,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetail"
           description: Link not found
-        "429":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Too many requests
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying
-              schema:
-                type: string
         "500":
           content:
             application/problem+json:
@@ -304,12 +265,6 @@ paths:
       responses:
         "302":
           description: Redirect to the stored URL; Cache-Control is no-store
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Request validation failed; errors lists the offending fields
         "404":
           content:
             application/problem+json:
@@ -325,17 +280,6 @@ paths:
           headers:
             Cache-Control:
               description: Always no-store
-              schema:
-                type: string
-        "429":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Too many requests
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying
               schema:
                 type: string
         "500":
@@ -370,12 +314,6 @@ paths:
       responses:
         "302":
           description: Same as GET
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Request validation failed; errors lists the offending fields
         "404":
           content:
             application/problem+json:
@@ -391,17 +329,6 @@ paths:
           headers:
             Cache-Control:
               description: Always no-store
-              schema:
-                type: string
-        "429":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetail"
-          description: Too many requests
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying
               schema:
                 type: string
         "500":

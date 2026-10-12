@@ -42,7 +42,7 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
   static final String UNAUTHORIZED = "401";
   static final String GONE = "410";
 
-  private static final String API_PREFIX = "/api/";
+  private static final String CREATE_PATH = "/api/v1/links";
 
   /** The redirect path as springdoc renders it, with the code pattern stripped. */
   private static final String REDIRECT_PATH = "/{code}";
@@ -50,14 +50,9 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
   private static final String SCHEMA_REF = "#/components/schemas/" + PROBLEM_SCHEMA;
   private static final String RETRY_AFTER_DESCRIPTION = "Seconds to wait before retrying";
 
-  /** Added to every operation, in document order. */
-  private static final List<CatalogueEntry> COMMON_ENTRIES =
+  /** Shared by every operation: the unexpected error and the database outage. */
+  private static final List<CatalogueEntry> SHARED_ENTRIES =
       List.of(
-          new CatalogueEntry(
-              "400", "Request validation failed; errors lists the offending fields", null, null),
-          new CatalogueEntry("404", "Link not found", null, null),
-          new CatalogueEntry(
-              "429", "Too many requests", HttpHeaders.RETRY_AFTER, RETRY_AFTER_DESCRIPTION),
           new CatalogueEntry("500", "Internal error; no stack trace is exposed", null, null),
           new CatalogueEntry(
               "503",
@@ -72,6 +67,9 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
           HttpHeaders.WWW_AUTHENTICATE,
           "Challenge, always ApiKey realm=\"url-shortener\"");
 
+  private static final CatalogueEntry NOT_FOUND_ENTRY =
+      new CatalogueEntry("404", "Link not found", null, null);
+
   private static final CatalogueEntry GONE_ENTRY =
       new CatalogueEntry(
           GONE,
@@ -79,11 +77,24 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
           HttpHeaders.CACHE_CONTROL,
           "Always no-store");
 
-  /** The redirect's catalogue: the common entries plus the 410, kept in status order. */
-  private static final List<CatalogueEntry> REDIRECT_ENTRIES =
-      Stream.concat(COMMON_ENTRIES.stream(), Stream.of(GONE_ENTRY))
-          .sorted(Comparator.comparing(CatalogueEntry::status))
-          .toList();
+  /** Create (design 3.3): validation, key, alias conflict, body size, media type, rate limit. */
+  private static final List<CatalogueEntry> CREATE_ENTRIES =
+      sorted(
+          new CatalogueEntry(
+              "400", "Request validation failed; errors lists the offending fields", null, null),
+          UNAUTHORIZED_ENTRY,
+          new CatalogueEntry("409", "Alias already in use", null, null),
+          new CatalogueEntry("413", "Request body too large; the limit is 16 KiB", null, null),
+          new CatalogueEntry("415", "Request body must be application/json", null, null),
+          new CatalogueEntry(
+              "429", "Too many requests", HttpHeaders.RETRY_AFTER, RETRY_AFTER_DESCRIPTION));
+
+  /** Metadata, statistics and delete (design 3.3): key and unknown code. */
+  private static final List<CatalogueEntry> MANAGEMENT_ENTRIES =
+      sorted(UNAUTHORIZED_ENTRY, NOT_FOUND_ENTRY);
+
+  /** The public redirect and probe (design 3.3): unknown code and expiry. */
+  private static final List<CatalogueEntry> REDIRECT_ENTRIES = sorted(NOT_FOUND_ENTRY, GONE_ENTRY);
 
   @Override
   public void customise(OpenAPI openApi) {
@@ -102,19 +113,36 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
   }
 
   private static void addErrors(String path, PathItem item) {
-    for (Operation operation : item.readOperations()) {
-      ApiResponses responses = responsesOf(operation);
-      if (path.startsWith(API_PREFIX)) {
-        responses.putIfAbsent(UNAUTHORIZED_ENTRY.status(), UNAUTHORIZED_ENTRY.toResponse());
-      }
-      for (CatalogueEntry entry : catalogueFor(path)) {
-        responses.putIfAbsent(entry.status(), entry.toResponse());
-      }
-    }
+    item.readOperationsMap()
+        .forEach(
+            (method, operation) -> {
+              ApiResponses responses = responsesOf(operation);
+              for (CatalogueEntry entry : catalogueFor(path, method)) {
+                responses.putIfAbsent(entry.status(), entry.toResponse());
+              }
+            });
   }
 
-  private static List<CatalogueEntry> catalogueFor(String path) {
-    return REDIRECT_PATH.equals(path) ? REDIRECT_ENTRIES : COMMON_ENTRIES;
+  /**
+   * The catalogue is per operation so the export lists exactly the statuses an endpoint produces:
+   * the create operation carries the conflict, size, media-type and rate-limit cases, the
+   * management operations carry the key and unknown-code cases, and the public redirect carries
+   * unknown code and expiry. The two shared entries close every list.
+   */
+  private static List<CatalogueEntry> catalogueFor(String path, PathItem.HttpMethod method) {
+    if (REDIRECT_PATH.equals(path)) {
+      return REDIRECT_ENTRIES;
+    }
+    if (CREATE_PATH.equals(path) && method == PathItem.HttpMethod.POST) {
+      return CREATE_ENTRIES;
+    }
+    return MANAGEMENT_ENTRIES;
+  }
+
+  private static List<CatalogueEntry> sorted(CatalogueEntry... specific) {
+    return Stream.concat(Stream.of(specific), SHARED_ENTRIES.stream())
+        .sorted(Comparator.comparing(CatalogueEntry::status))
+        .toList();
   }
 
   private static ApiResponses responsesOf(Operation operation) {

@@ -27,12 +27,13 @@ class OpenApiErrorCustomizerTest {
     customizer.customise(openApi);
 
     assertThat(create.getResponses().keySet())
-        .containsExactly("201", "401", "400", "404", "429", "500", "503");
+        .containsExactly("201", "400", "401", "409", "413", "415", "429", "500", "503");
     assertThat(create.getResponses().get("401").getHeaders())
         .containsKey(HttpHeaders.WWW_AUTHENTICATE);
     assertThat(create.getResponses().get("429").getHeaders()).containsKey(HttpHeaders.RETRY_AFTER);
     assertThat(create.getResponses().get("503").getHeaders()).containsKey(HttpHeaders.RETRY_AFTER);
-    assertThat(create.getResponses().get("404").getHeaders()).isNull();
+    assertThat(create.getResponses().get("409").getHeaders()).isNull();
+    assertThat(create.getResponses()).doesNotContainKey("404");
   }
 
   @Test
@@ -42,8 +43,7 @@ class OpenApiErrorCustomizerTest {
 
     customizer.customise(openApi);
 
-    assertThat(redirect.getResponses().keySet())
-        .containsExactly("400", "404", "410", "429", "500", "503");
+    assertThat(redirect.getResponses().keySet()).containsExactly("404", "410", "500", "503");
   }
 
   @Test
@@ -66,7 +66,7 @@ class OpenApiErrorCustomizerTest {
 
     customizer.customise(openApi);
 
-    assertThat(lookup.getResponses()).doesNotContainKey("410");
+    assertThat(lookup.getResponses().keySet()).containsExactly("401", "404", "500", "503");
   }
 
   @Test
@@ -135,7 +135,7 @@ class OpenApiErrorCustomizerTest {
     customizer.customise(openApi);
     customizer.customise(openApi);
 
-    assertThat(create.getResponses()).hasSize(6);
+    assertThat(create.getResponses()).hasSize(8);
     assertThat(openApi.getComponents().getSchemas()).hasSize(1);
   }
 

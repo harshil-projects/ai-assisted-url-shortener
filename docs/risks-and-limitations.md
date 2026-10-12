@@ -56,7 +56,7 @@ note in the review:
 |---|---|---|
 | 1 | Map `CannotCreateTransactionException` (pool timeout inside a transaction) to the 503 Problem, not 500 | should-fix |
 | 2 | Clear the global API-key requirement on the public redirect operations in the OpenAPI export | note |
-| 4 | Make the OpenAPI error catalogue per operation (409, 413, 415 on create; 429 only where the limiter applies) | should-fix |
+| 4 | OpenAPI error catalogue made per operation: 409, 413, 415 and 429 on create only, 401 and 404 on management, 404 and 410 on the redirect | fixed after the review (T-008 ledger entry) |
 | 5 | One Problem shape for `instance` between filter-written and handler-written bodies; add the handler case to `ProblemDetailIT` | should-fix |
 | 8 | Emit `X-RateLimit-Reset` on every create or document it as 429-only | note |
 | 13 | Add the real-database collision and alias-race tests the task specs name | should-fix |
