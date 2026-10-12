@@ -666,6 +666,21 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-006/verify-1.log
+  - task: T-008
+    commit: "e0c201fafaed86cb7f87a8c825baed4ac6566a59"
+    tree: dirty
+    run_at: "2026-10-12T03:54:49Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-008/verify-1.log
 signoffs:
   - task: T-000
     reasons: [dependency]

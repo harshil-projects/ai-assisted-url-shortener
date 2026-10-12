@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement, document]
 impact: normal
 impact_reasons: []
-status: in-progress
+status: done
 depends_on: [T-006, T-007]
 intent: >
   Make the API self-describing and keep it honest: an OpenAPI 3.1 document with the Problem Details
