@@ -4,7 +4,7 @@ requirement: R-02
 activities: [refactor]
 impact: normal
 impact_reasons: []
-status: in-progress
+status: done
 depends_on: [T-103]
 intent: >
   Remove the single worst smell the T-101 analysis found, in small behaviour-preserving steps, with
