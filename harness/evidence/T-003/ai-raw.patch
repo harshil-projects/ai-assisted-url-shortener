@@ -1,0 +1,805 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/LogSanitizer.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/LogSanitizer.java
+new file mode 100644
+index 0000000..f7c7acc
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/LogSanitizer.java
+@@ -0,0 +1,39 @@
++package dev.harshil.shortener.domain;
++
++/**
++ * Prepares user-controlled text for a log statement (CWE-117, design 3.7).
++ *
++ * <p>A client can put a carriage return or line feed in a path, header or JSON field and forge a
++ * second log line, or hide a real one behind a terminal control sequence. This utility removes
++ * every ISO control character, which covers CR, LF, tab, escape and the C1 range, and caps the
++ * length so a multi-kilobyte value cannot flood the log. It is the only route by which
++ * request-derived values reach a logger in this code base.
++ */
++public final class LogSanitizer {
++
++  /** Longest value a single log line keeps; enough for a code or a host, not for a payload. */
++  static final int MAX_LENGTH = 200;
++
++  private LogSanitizer() {}
++
++  /**
++   * Returns the value with control characters removed and at most {@link #MAX_LENGTH} characters.
++   *
++   * @param value any text, possibly from a request; {@code null} is rendered as the literal {@code
++   *     "null"} so a log line never throws
++   * @return log-safe text, never {@code null}
++   */
++  public static String sanitize(String value) {
++    if (value == null) {
++      return "null";
++    }
++    StringBuilder safe = new StringBuilder(Math.min(value.length(), MAX_LENGTH));
++    for (int i = 0; i < value.length() && safe.length() < MAX_LENGTH; i++) {
++      char current = value.charAt(i);
++      if (!Character.isISOControl(current)) {
++        safe.append(current);
++      }
++    }
++    return safe.toString();
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ReservedWords.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ReservedWords.java
+new file mode 100644
+index 0000000..62ccc6a
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ReservedWords.java
+@@ -0,0 +1,47 @@
++package dev.harshil.shortener.domain;
++
++import java.util.Locale;
++import java.util.Set;
++
++/**
++ * Aliases a client may not claim because they collide with, or look like, paths the service itself
++ * serves: the management API, actuator, API docs, browser conventions, and the names reserved for
++ * future surfaces (design 3.6). Matching is case-insensitive even though codes are case-sensitive,
++ * because {@code /API} or {@code /Admin} would still mislead a reader of the short URL.
++ */
++public final class ReservedWords {
++
++  private static final Set<String> WORDS =
++      Set.of(
++          "api",
++          "actuator",
++          "health",
++          "metrics",
++          "prometheus",
++          "swagger-ui",
++          "v3",
++          "api-docs",
++          "error",
++          "favicon.ico",
++          "robots.txt",
++          ".well-known",
++          "static",
++          "assets",
++          "stats",
++          "admin",
++          "login",
++          "h2-console");
++
++  private ReservedWords() {}
++
++  /**
++   * Tells whether an alias is reserved.
++   *
++   * @param alias the candidate alias; {@code null} is not reserved because there is nothing to
++   *     collide with, and the DTO decides whether an alias is required
++   * @return true when the alias, compared case-insensitively, is on the reserved list
++   */
++  public static boolean isReserved(String alias) {
++    return alias != null && WORDS.contains(alias.toLowerCase(Locale.ROOT));
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/UrlValidationException.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/UrlValidationException.java
+new file mode 100644
+index 0000000..fbff6e5
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/UrlValidationException.java
+@@ -0,0 +1,58 @@
++package dev.harshil.shortener.domain;
++
++import java.util.List;
++import java.util.stream.Collectors;
++
++/**
++ * Raised when a value in a create request breaks a business rule that Bean Validation cannot
++ * express: the URL rules of {@code UrlValidator} and the reserved-alias rule. It carries the same
++ * {@code (field, message)} pairs the API returns for Bean Validation failures, so both paths render
++ * as one {@code validation-failed} problem with an {@code errors} list (design 3.4).
++ *
++ * <p>Messages are fixed, human-readable sentences chosen by the validator; they never echo the
++ * rejected value, so the exception is safe to log and to return to clients.
++ */
++public final class UrlValidationException extends RuntimeException {
++
++  private final List<FieldError> errors;
++
++  /**
++   * Creates the exception from one or more field errors.
++   *
++   * @param errors the violations, at least one; copied defensively
++   */
++  public UrlValidationException(List<FieldError> errors) {
++    super(summarise(errors));
++    this.errors = List.copyOf(errors);
++  }
++
++  /**
++   * Convenience for the common single-violation case.
++   *
++   * @param field the request field at fault, for example {@code url} or {@code customAlias}
++   * @param message the fixed, safe explanation
++   * @return the exception
++   */
++  public static UrlValidationException of(String field, String message) {
++    return new UrlValidationException(List.of(new FieldError(field, message)));
++  }
++
++  /** Returns the violations in the order they were detected; the list is immutable. */
++  public List<FieldError> getErrors() {
++    return errors;
++  }
++
++  private static String summarise(List<FieldError> errors) {
++    return errors.stream()
++        .map(error -> error.field() + ": " + error.message())
++        .collect(Collectors.joining("; ", "Validation failed: ", ""));
++  }
++
++  /**
++   * One violated rule.
++   *
++   * @param field the request field at fault
++   * @param message the fixed, safe explanation
++   */
++  public record FieldError(String field, String message) {}
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/CodeGenerator.java b/url-shortener/src/main/java/dev/harshil/shortener/service/CodeGenerator.java
+new file mode 100644
+index 0000000..521eea2
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/CodeGenerator.java
+@@ -0,0 +1,57 @@
++package dev.harshil.shortener.service;
++
++import java.security.SecureRandom;
++import java.util.Random;
++import org.springframework.stereotype.Component;
++
++/**
++ * Produces the random short codes that identify links (ADR 0003).
++ *
++ * <p>Codes are 7 characters over the 62-character alphabet {@code [A-Za-z0-9]}, so the space holds
++ * 62^7, about 3.5 trillion, values. Drawing codes uniformly at random from {@link SecureRandom}
++ * makes them non-enumerable, which matters because the redirect endpoint is public. Collisions are
++ * resolved by the database's unique constraint and a retry in {@code LinkService}, not here; the
++ * mathematics says they are rare: inserting the first million codes produces about n^2 / 2N = 10^12
++ * / (2 x 3.5 x 10^12), roughly 0.14, collisions in total, and a single insert into a table of a
++ * million rows collides with probability 10^6 / 3.5 x 10^12, under one in three million.
++ *
++ * <p>The alphabet is a strict subset of the alias pattern {@code [A-Za-z0-9_-]}, so a generated
++ * code and a custom alias can never differ only in a character the path regex would reject.
++ */
++@Component
++public final class CodeGenerator {
++
++  /** Characters in a generated code. */
++  public static final int LENGTH = 7;
++
++  static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
++
++  private final Random random;
++
++  /** Production constructor: cryptographically strong randomness. */
++  public CodeGenerator() {
++    this(new SecureRandom());
++  }
++
++  /**
++   * Test constructor: any {@link Random}, for example a seeded one, so sequences are reproducible.
++   *
++   * @param random the source of randomness
++   */
++  public CodeGenerator(Random random) {
++    this.random = random;
++  }
++
++  /**
++   * Draws a fresh code.
++   *
++   * @return exactly {@link #LENGTH} characters from the Base62 alphabet
++   */
++  public String next() {
++    char[] code = new char[LENGTH];
++    for (int i = 0; i < LENGTH; i++) {
++      code[i] = ALPHABET.charAt(random.nextInt(ALPHABET.length()));
++    }
++    return new String(code);
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/UrlValidator.java b/url-shortener/src/main/java/dev/harshil/shortener/service/UrlValidator.java
+new file mode 100644
+index 0000000..93c19ad
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/UrlValidator.java
+@@ -0,0 +1,210 @@
++package dev.harshil.shortener.service;
++
++import dev.harshil.shortener.domain.UrlValidationException;
++import java.net.InetAddress;
++import java.net.URI;
++import java.net.URISyntaxException;
++import java.net.UnknownHostException;
++import java.util.Locale;
++import java.util.Optional;
++import java.util.Set;
++import java.util.regex.Pattern;
++import org.springframework.stereotype.Component;
++
++/**
++ * Decides whether a submitted URL may become a redirect target and returns its canonical form
++ * (design 3.6, 3.7).
++ *
++ * <p>The threat is not SSRF, because this service never fetches the target; it is link laundering:
++ * a trusted short domain pointing a victim at an intranet or cloud-metadata address. So the rules
++ * are structural (absolute {@code http} or {@code https}, a host, no credentials, bounded length)
++ * plus a block list of literal addresses and the two host names attackers reach for. Host names are
++ * never resolved: a lookup would turn every create request into a DNS query the client controls,
++ * and a name that later resolves to a private address is a documented, accepted limitation.
++ *
++ * <p>Numeric hosts are accepted only as a canonical dotted quad or a bracketed IPv6 literal. The
++ * shorthand forms browsers also understand, {@code 2130706433}, {@code 0x7f000001}, {@code
++ * 0177.0.0.1} or {@code 012.0.0.1}, are rejected outright: {@link URI} reports them as host names,
++ * so they would bypass the address block list while the browser still lands on 127.0.0.1 or
++ * 10.0.0.1.
++ *
++ * <p>Canonicalisation lowercases only the scheme and the host, which are case-insensitive by RFC
++ * 3986; path, query and fragment are preserved byte for byte, including existing percent-encoding,
++ * because changing them could change where the link lands.
++ */
++@Component
++public final class UrlValidator {
++
++  /** Longest canonical URL stored; mirrors the {@code original_url} column. */
++  public static final int MAX_LENGTH = 2048;
++
++  static final String FIELD = "url";
++  static final String MSG_REQUIRED = "URL is required";
++  static final String MSG_MALFORMED = "URL is not well-formed";
++  static final String MSG_SCHEME = "URL must be absolute and use the http or https scheme";
++  static final String MSG_USER_INFO = "URL must not contain credentials";
++  static final String MSG_HOST = "URL must have a valid host name or a canonical IP address";
++  static final String MSG_BLOCKED_HOST =
++      "URL must not point to a loopback, private, link-local, multicast or metadata address";
++  static final String MSG_TOO_LONG = "URL must be at most " + MAX_LENGTH + " characters";
++
++  private static final Set<String> ALLOWED_SCHEMES = Set.of("http", "https");
++  private static final Set<String> BLOCKED_HOST_NAMES =
++      Set.of("localhost", "metadata.google.internal");
++  private static final String METADATA_ADDRESS = "169.254.169.254";
++  private static final String DECIMAL_OCTET = "25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]";
++  private static final Pattern CANONICAL_IPV4 =
++      Pattern.compile("^(?:" + DECIMAL_OCTET + ")(?:\\.(?:" + DECIMAL_OCTET + ")){3}$");
++  private static final Pattern NUMERIC_LABEL = Pattern.compile("^(?:0[xX][0-9a-fA-F]*|[0-9]+)$");
++  private static final int IPV4_LENGTH = 4;
++  private static final int UNIQUE_LOCAL_MASK = 0xFE;
++  private static final int UNIQUE_LOCAL_PREFIX = 0xFC;
++
++  /**
++   * Validates and canonicalises a URL.
++   *
++   * @param raw the value exactly as the client sent it; surrounding whitespace is tolerated
++   * @return the canonical URL: lowercase scheme and host, everything else untouched
++   * @throws UrlValidationException with field {@code url} and one fixed message per broken rule
++   */
++  public String validate(String raw) {
++    if (raw == null || raw.isBlank()) {
++      throw reject(MSG_REQUIRED);
++    }
++    URI uri = parse(raw.strip());
++    String scheme = uri.getScheme();
++    if (scheme == null || !ALLOWED_SCHEMES.contains(scheme.toLowerCase(Locale.ROOT))) {
++      throw reject(MSG_SCHEME);
++    }
++    if (uri.getRawUserInfo() != null) {
++      throw reject(MSG_USER_INFO);
++    }
++    String host = uri.getHost();
++    if (host == null || host.isEmpty() || isAmbiguousNumericHost(host)) {
++      throw reject(MSG_HOST);
++    }
++    if (isBlockedHost(host)) {
++      throw reject(MSG_BLOCKED_HOST);
++    }
++    String canonical = canonicalise(uri, host);
++    if (canonical.length() > MAX_LENGTH) {
++      throw reject(MSG_TOO_LONG);
++    }
++    return canonical;
++  }
++
++  private static URI parse(String value) {
++    try {
++      return new URI(value);
++    } catch (URISyntaxException e) {
++      throw reject(MSG_MALFORMED);
++    }
++  }
++
++  private static UrlValidationException reject(String message) {
++    return UrlValidationException.of(FIELD, message);
++  }
++
++  private static String canonicalise(URI uri, String host) {
++    StringBuilder canonical =
++        new StringBuilder(uri.getScheme().toLowerCase(Locale.ROOT))
++            .append("://")
++            .append(host.toLowerCase(Locale.ROOT));
++    if (uri.getPort() != -1) {
++      canonical.append(':').append(uri.getPort());
++    }
++    canonical.append(uri.getRawPath());
++    if (uri.getRawQuery() != null) {
++      canonical.append('?').append(uri.getRawQuery());
++    }
++    if (uri.getRawFragment() != null) {
++      canonical.append('#').append(uri.getRawFragment());
++    }
++    return canonical.toString();
++  }
++
++  /**
++   * True for a host that is neither a bracketed IPv6 literal nor a canonical dotted quad but whose
++   * rightmost label is a decimal or hexadecimal number. RFC 1123 forbids an all-numeric top label,
++   * and browsers treat such hosts as IPv4 numbers, so the only safe answer is to refuse them.
++   */
++  private static boolean isAmbiguousNumericHost(String host) {
++    if (host.startsWith("[") || CANONICAL_IPV4.matcher(host).matches()) {
++      return false;
++    }
++    String name = withoutTrailingDot(host);
++    String lastLabel = name.substring(name.lastIndexOf('.') + 1);
++    return NUMERIC_LABEL.matcher(lastLabel).matches();
++  }
++
++  /**
++   * Blocks the two well-known names and every literal address in a non-public range. A plain host
++   * name that is not on the list passes without any resolution.
++   */
++  private static boolean isBlockedHost(String host) {
++    String name = withoutTrailingDot(host.toLowerCase(Locale.ROOT));
++    if (BLOCKED_HOST_NAMES.contains(name)) {
++      return true;
++    }
++    return literalAddress(host).map(UrlValidator::isBlockedAddress).orElse(false);
++  }
++
++  private static String withoutTrailingDot(String host) {
++    return host.endsWith(".") ? host.substring(0, host.length() - 1) : host;
++  }
++
++  /**
++   * Parses an IP literal without touching the resolver. A canonical dotted quad is parsed by hand
++   * into bytes; an IPv6 literal is recognised by the brackets {@link URI} guarantees around it, and
++   * the JDK converts a bracketed value textually, never through DNS. Anything else is a host name
++   * and yields empty.
++   */
++  private static Optional<InetAddress> literalAddress(String host) {
++    if (host.startsWith("[")) {
++      return Optional.of(ipv6Literal(host));
++    }
++    if (!CANONICAL_IPV4.matcher(host).matches()) {
++      return Optional.empty();
++    }
++    String[] parts = host.split("\\.");
++    byte[] octets = new byte[IPV4_LENGTH];
++    for (int i = 0; i < IPV4_LENGTH; i++) {
++      octets[i] = (byte) Integer.parseInt(parts[i]);
++    }
++    return Optional.of(ipv4Literal(octets));
++  }
++
++  private static InetAddress ipv6Literal(String bracketed) {
++    try {
++      return InetAddress.getByName(bracketed);
++    } catch (UnknownHostException e) {
++      // URI already validated the literal syntax, so this is unreachable in practice; failing
++      // closed keeps a malformed literal out of the database.
++      throw reject(MSG_HOST);
++    }
++  }
++
++  private static InetAddress ipv4Literal(byte[] octets) {
++    try {
++      return InetAddress.getByAddress(octets);
++    } catch (UnknownHostException e) {
++      // Only thrown for an illegal length, which the pattern rules out.
++      throw reject(MSG_HOST);
++    }
++  }
++
++  private static boolean isBlockedAddress(InetAddress address) {
++    byte[] bytes = address.getAddress();
++    boolean uniqueLocalIpv6 =
++        bytes.length != IPV4_LENGTH && (bytes[0] & UNIQUE_LOCAL_MASK) == UNIQUE_LOCAL_PREFIX;
++    boolean zeroNetworkIpv4 = bytes.length == IPV4_LENGTH && bytes[0] == 0;
++    return address.isLoopbackAddress()
++        || address.isSiteLocalAddress()
++        || address.isLinkLocalAddress()
++        || address.isAnyLocalAddress()
++        || address.isMulticastAddress()
++        || zeroNetworkIpv4
++        || uniqueLocalIpv6
++        || METADATA_ADDRESS.equals(address.getHostAddress());
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/LogSanitizerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/LogSanitizerTest.java
+new file mode 100644
+index 0000000..3bbc318
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/LogSanitizerTest.java
+@@ -0,0 +1,65 @@
++package dev.harshil.shortener.domain;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import org.junit.jupiter.api.Test;
++
++class LogSanitizerTest {
++
++  @Test
++  void sanitize_null_returnsTheWordNull() {
++    assertThat(LogSanitizer.sanitize(null)).isEqualTo("null");
++  }
++
++  @Test
++  void sanitize_plainText_isReturnedUnchanged() {
++    assertThat(LogSanitizer.sanitize("abc-DEF_123 example.com"))
++        .isEqualTo("abc-DEF_123 example.com");
++  }
++
++  @Test
++  void sanitize_carriageReturnAndLineFeed_areRemovedSoNoSecondLogLineCanBeForged() {
++    String forged = "ok\r\n2026-10-12 ERROR fake line\ntail";
++
++    assertThat(LogSanitizer.sanitize(forged)).isEqualTo("ok2026-10-12 ERROR fake linetail");
++  }
++
++  @Test
++  void sanitize_otherControlCharacters_areRemoved() {
++    String withControls =
++        "a\tb\u0000c\u001bd\u007fe\u0085f"; // NUL, ESC, DEL, NEL are all control characters
++
++    assertThat(LogSanitizer.sanitize(withControls)).isEqualTo("abcdef");
++  }
++
++  @Test
++  void sanitize_nonControlUnicode_isKept() {
++    assertThat(LogSanitizer.sanitize("café naïve ünïcode")).isEqualTo("café naïve ünïcode");
++  }
++
++  @Test
++  void sanitize_longValue_isTruncatedToTwoHundredCharacters() {
++    String longValue = "x".repeat(LogSanitizer.MAX_LENGTH + 50);
++
++    assertThat(LogSanitizer.sanitize(longValue)).hasSize(LogSanitizer.MAX_LENGTH);
++  }
++
++  @Test
++  void sanitize_valueOfExactlyMaxLength_isKeptWhole() {
++    String exact = "y".repeat(LogSanitizer.MAX_LENGTH);
++
++    assertThat(LogSanitizer.sanitize(exact)).isEqualTo(exact);
++  }
++
++  @Test
++  void sanitize_controlCharactersDoNotCountTowardsTheLimit() {
++    String value = "\n".repeat(10) + "z".repeat(LogSanitizer.MAX_LENGTH);
++
++    assertThat(LogSanitizer.sanitize(value)).isEqualTo("z".repeat(LogSanitizer.MAX_LENGTH));
++  }
++
++  @Test
++  void sanitize_emptyString_returnsEmptyString() {
++    assertThat(LogSanitizer.sanitize("")).isEmpty();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/ReservedWordsTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/ReservedWordsTest.java
+new file mode 100644
+index 0000000..b4e48dd
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/ReservedWordsTest.java
+@@ -0,0 +1,54 @@
++package dev.harshil.shortener.domain;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.NullAndEmptySource;
++import org.junit.jupiter.params.provider.ValueSource;
++
++class ReservedWordsTest {
++
++  @ParameterizedTest
++  @ValueSource(
++      strings = {
++        "api",
++        "actuator",
++        "health",
++        "metrics",
++        "prometheus",
++        "swagger-ui",
++        "v3",
++        "api-docs",
++        "error",
++        "favicon.ico",
++        "robots.txt",
++        ".well-known",
++        "static",
++        "assets",
++        "stats",
++        "admin",
++        "login",
++        "h2-console"
++      })
++  void isReserved_everyWordOnTheDesignList_isTrue(String word) {
++    assertThat(ReservedWords.isReserved(word)).isTrue();
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"API", "Admin", "SWAGGER-UI", "Favicon.ICO", "H2-Console"})
++  void isReserved_mixedCaseVariant_isTrue(String word) {
++    assertThat(ReservedWords.isReserved(word)).isTrue();
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"abcd", "apis", "my-api", "api2", "stat", "healthz", "admin1", "login_"})
++  void isReserved_similarButDifferentAlias_isFalse(String alias) {
++    assertThat(ReservedWords.isReserved(alias)).isFalse();
++  }
++
++  @ParameterizedTest
++  @NullAndEmptySource
++  void isReserved_nullOrEmpty_isFalse(String alias) {
++    assertThat(ReservedWords.isReserved(alias)).isFalse();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/CodeGeneratorTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/CodeGeneratorTest.java
+new file mode 100644
+index 0000000..46c3311
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/CodeGeneratorTest.java
+@@ -0,0 +1,70 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import java.util.Random;
++import java.util.stream.IntStream;
++import org.junit.jupiter.api.Test;
++
++class CodeGeneratorTest {
++
++  private static final int DRAWS = 1_000;
++
++  @Test
++  void next_withSecureRandomDefault_returnsSevenBase62Characters() {
++    CodeGenerator generator = new CodeGenerator();
++
++    IntStream.range(0, DRAWS)
++        .mapToObj(ignored -> generator.next())
++        .forEach(code -> assertThat(code).hasSize(7).matches("[A-Za-z0-9]{7}"));
++  }
++
++  @Test
++  void next_withSameSeed_isReproducible() {
++    CodeGenerator first = new CodeGenerator(new Random(42));
++    CodeGenerator second = new CodeGenerator(new Random(42));
++
++    assertThat(first.next()).isEqualTo(second.next());
++    assertThat(first.next()).isEqualTo(second.next());
++  }
++
++  @Test
++  void next_withDifferentSeeds_producesDifferentCodes() {
++    CodeGenerator first = new CodeGenerator(new Random(1));
++    CodeGenerator second = new CodeGenerator(new Random(2));
++
++    assertThat(first.next()).isNotEqualTo(second.next());
++  }
++
++  @Test
++  void next_drawsEveryPositionFromTheFullAlphabetWithBound62() {
++    CodeGenerator generator = new CodeGenerator(new CountingRandom());
++
++    StringBuilder emitted = new StringBuilder();
++    for (int i = 0; i < CodeGenerator.ALPHABET.length(); i++) {
++      emitted.append(generator.next());
++    }
++
++    assertThat(emitted.toString()).startsWith(CodeGenerator.ALPHABET);
++  }
++
++  @Test
++  void alphabet_hasSixtyTwoDistinctCharactersThatAllMatchTheAliasPattern() {
++    assertThat(CodeGenerator.ALPHABET).hasSize(62).matches("[A-Za-z0-9]{62}");
++    assertThat(CodeGenerator.ALPHABET.chars().distinct().count()).isEqualTo(62);
++    assertThat(CodeGenerator.LENGTH).isEqualTo(7);
++  }
++
++  /** Returns 0, 1, 2, ... modulo the bound, and records that the bound is the alphabet size. */
++  private static final class CountingRandom extends Random {
++
++    private static final long serialVersionUID = 1L;
++    private int next;
++
++    @Override
++    public int nextInt(int bound) {
++      assertThat(bound).isEqualTo(CodeGenerator.ALPHABET.length());
++      return next++ % bound;
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/UrlValidatorTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/UrlValidatorTest.java
+new file mode 100644
+index 0000000..620e8ca
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/UrlValidatorTest.java
+@@ -0,0 +1,151 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.domain.UrlValidationException;
++import dev.harshil.shortener.domain.UrlValidationException.FieldError;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.CsvSource;
++import org.junit.jupiter.params.provider.MethodSource;
++import org.junit.jupiter.params.provider.NullAndEmptySource;
++import org.junit.jupiter.params.provider.ValueSource;
++
++class UrlValidatorTest {
++
++  private final UrlValidator validator = new UrlValidator();
++
++  @ParameterizedTest(name = "{0} -> {1}")
++  @CsvSource(
++      delimiter = '|',
++      value = {
++        "https://example.com/path?q=1#frag | https://example.com/path?q=1#frag",
++        "HTTPS://EXAMPLE.COM/Path/Keeps/Case | https://example.com/Path/Keeps/Case",
++        "Http://Example.Com | http://example.com",
++        "http://example.com:8080/a | http://example.com:8080/a",
++        "https://sub.example.co.uk/a%20b?x=%2F | https://sub.example.co.uk/a%20b?x=%2F",
++        "https://example.com?query=only | https://example.com?query=only",
++        "https://example.com./trailing-dot | https://example.com./trailing-dot",
++        "https://xn--bcher-kva.example/ | https://xn--bcher-kva.example/",
++        "https://8.8.8.8/dns | https://8.8.8.8/dns",
++        "http://172.32.0.1/just-outside-rfc1918 | http://172.32.0.1/just-outside-rfc1918",
++        "http://11.0.0.1/public | http://11.0.0.1/public",
++        "https://[2001:db8::1]/v6 | https://[2001:db8::1]/v6",
++        "https://[2606:4700:4700::1111]:8443/x | https://[2606:4700:4700::1111]:8443/x",
++        "'  https://example.com/trimmed  ' | https://example.com/trimmed",
++      })
++  void validate_acceptableUrl_returnsCanonicalForm(String raw, String canonical) {
++    assertThat(validator.validate(raw)).isEqualTo(canonical);
++  }
++
++  @ParameterizedTest
++  @NullAndEmptySource
++  @ValueSource(strings = {"   ", "\t\n"})
++  void validate_blankUrl_rejectsAsRequired(String raw) {
++    assertRejected(raw, UrlValidator.MSG_REQUIRED);
++  }
++
++  @ParameterizedTest(name = "{0} -> {1}")
++  @MethodSource("rejectedUrls")
++  void validate_unacceptableUrl_rejectsWithOneFixedMessage(String raw, String message) {
++    assertRejected(raw, message);
++  }
++
++  static Stream<Arguments> rejectedUrls() {
++    return Stream.of(
++        Arguments.of("not a url", UrlValidator.MSG_MALFORMED),
++        Arguments.of("http://exa mple.com/", UrlValidator.MSG_MALFORMED),
++        Arguments.of("http://[::1/", UrlValidator.MSG_MALFORMED),
++        Arguments.of("example.com/path", UrlValidator.MSG_SCHEME),
++        Arguments.of("//example.com/path", UrlValidator.MSG_SCHEME),
++        Arguments.of("/relative/path", UrlValidator.MSG_SCHEME),
++        Arguments.of("ftp://example.com/file", UrlValidator.MSG_SCHEME),
++        Arguments.of("javascript:alert(1)", UrlValidator.MSG_SCHEME),
++        Arguments.of("mailto:someone@example.com", UrlValidator.MSG_SCHEME),
++        Arguments.of("file:///etc/passwd", UrlValidator.MSG_SCHEME),
++        Arguments.of("data:text/html,hi", UrlValidator.MSG_SCHEME),
++        Arguments.of("http://user:pass@example.com/", UrlValidator.MSG_USER_INFO),
++        Arguments.of("https://user@example.com/", UrlValidator.MSG_USER_INFO),
++        Arguments.of("http:///path-without-host", UrlValidator.MSG_HOST),
++        Arguments.of("http://exa_mple.com/", UrlValidator.MSG_HOST),
++        Arguments.of("http://2130706433/", UrlValidator.MSG_HOST),
++        Arguments.of("http://2130706433./", UrlValidator.MSG_HOST),
++        Arguments.of("http://0x7f000001/", UrlValidator.MSG_HOST),
++        Arguments.of("http://0x7f.0.0.1/", UrlValidator.MSG_HOST),
++        Arguments.of("http://012.0.0.1/", UrlValidator.MSG_HOST),
++        Arguments.of("http://0177.0.0.1/", UrlValidator.MSG_HOST),
++        Arguments.of("http://127.1/", UrlValidator.MSG_HOST),
++        Arguments.of("http://example.123/", UrlValidator.MSG_HOST),
++        Arguments.of("http://256.1.1.1/", UrlValidator.MSG_HOST),
++        Arguments.of("http://localhost/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://LOCALHOST:8080/x", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://localhost./", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of(
++            "http://metadata.google.internal/computeMetadata/v1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://127.0.0.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://127.255.255.254/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://10.0.0.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://172.16.0.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://172.31.255.255/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://192.168.1.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://169.254.169.254/latest/meta-data/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://169.254.0.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://0.0.0.0/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://0.1.2.3/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://224.0.0.1/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://239.255.255.255/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[::]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[fc00::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[fdab:1234::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[fe80::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[febf::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[ff02::1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[::ffff:127.0.0.1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[::ffff:10.0.0.1]/", UrlValidator.MSG_BLOCKED_HOST),
++        Arguments.of("http://[::ffff:169.254.169.254]/", UrlValidator.MSG_BLOCKED_HOST));
++  }
++
++  @Test
++  void validate_urlOfExactlyMaxLength_isAccepted() {
++    String prefix = "https://example.com/";
++    String raw = prefix + "a".repeat(UrlValidator.MAX_LENGTH - prefix.length());
++
++    assertThat(validator.validate(raw)).hasSize(UrlValidator.MAX_LENGTH);
++  }
++
++  @Test
++  void validate_urlOneCharacterOverMaxLength_isRejectedAsTooLong() {
++    String prefix = "https://example.com/";
++    String raw = prefix + "a".repeat(UrlValidator.MAX_LENGTH - prefix.length() + 1);
++
++    assertRejected(raw, UrlValidator.MSG_TOO_LONG);
++  }
++
++  @Test
++  void validate_lengthIsMeasuredAfterCanonicalisation_notOnTheRawInput() {
++    String prefix = "https://example.com/";
++    String padded = "   " + prefix + "a".repeat(UrlValidator.MAX_LENGTH - prefix.length()) + "   ";
++
++    assertThat(validator.validate(padded)).hasSize(UrlValidator.MAX_LENGTH);
++  }
++
++  @Test
++  void validate_hostName_isNeverResolved_soAnUnresolvableNamePasses() {
++    String raw = "https://this-name-does-not-exist.invalid/path";
++
++    assertThat(validator.validate(raw)).isEqualTo(raw);
++  }
++
++  private void assertRejected(String raw, String message) {
++    assertThatThrownBy(() -> validator.validate(raw))
++        .isInstanceOfSatisfying(
++            UrlValidationException.class,
++            ex ->
++                assertThat(ex.getErrors())
++                    .containsExactly(new FieldError(UrlValidator.FIELD, message)));
++  }
++}
