@@ -19,6 +19,11 @@ public class ProblemWriter {
 
   private final JsonMapper jsonMapper;
 
+  /**
+   * Creates a writer that serialises with the application's Jackson 3 mapper.
+   *
+   * @param jsonMapper the Boot-configured {@link JsonMapper}
+   */
   public ProblemWriter(JsonMapper jsonMapper) {
     this.jsonMapper = jsonMapper;
   }

@@ -1,0 +1,318 @@
+# gate T-001 run 3 at 2026-10-12T02:37:57Z
+### .\mvnw.cmd -q spotless:apply
+### .\mvnw.cmd -ntp verify
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor)                                [pom]
+[INFO] url-shortener                                                      [jar]
+[INFO] harness-check                                                      [jar]
+[INFO] 
+[INFO] ----------< dev.harshil.shortener:ai-assisted-url-shortener >-----------
+[INFO] Building AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT        [1/3]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ ai-assisted-url-shortener ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ ai-assisted-url-shortener ---
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ ai-assisted-url-shortener ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\target\\jacoco.exec
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ ai-assisted-url-shortener ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ ai-assisted-url-shortener ---
+[INFO] Skipping JaCoCo execution due to missing execution data file.
+[INFO] 
+[INFO] ----------------< dev.harshil.shortener:url-shortener >-----------------
+[INFO] Building url-shortener 0.1.0-SNAPSHOT                              [2/3]
+[INFO]   from url-shortener\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ url-shortener ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ url-shortener ---
+[INFO] Spotless.Java is keeping 12 files clean - 0 needs changes to be clean, 0 were already clean, 12 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- dependency:3.10.0:properties (mockito-agent-path) @ url-shortener ---
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ url-shortener ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\url-shortener\\target\\jacoco.exec,excludes=dev/harshil/shortener/UrlShortenerApplication.class:dev/harshil/shortener/api/dto/**
+[INFO] 
+[INFO] --- spring-boot:4.1.1:build-info (build-info) @ url-shortener ---
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ url-shortener ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO] Copying 1 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ url-shortener ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 7 source files with javac [debug parameters release 21] to target\classes
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ url-shortener ---
+[INFO] Copying 1 resource from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ url-shortener ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 5 source files with javac [debug parameters release 21] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ url-shortener ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running dev.harshil.shortener.api.ProblemDetailsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.852 s -- in dev.harshil.shortener.api.ProblemDetailsTest
+[INFO] Running dev.harshil.shortener.config.AppPropertiesTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.242 s -- in dev.harshil.shortener.config.AppPropertiesTest
+[INFO] Running dev.harshil.shortener.config.SecuritySmokeIT
+08:08:59.498 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.SecuritySmokeIT]: SecuritySmokeIT does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+08:08:59.943 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.SecuritySmokeIT
+08:09:00.314 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.SecuritySmokeIT]: SecuritySmokeIT does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+08:09:00.323 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.SecuritySmokeIT
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.1.1)
+
+2026-10-12T08:09:01.555+05:30  INFO 24716 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : Starting SecuritySmokeIT using Java 21.0.12.1 with PID 24716 (started by Dell in C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener)
+2026-10-12T08:09:01.569+05:30  INFO 24716 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : The following 1 profile is active: "test"
+2026-10-12T08:09:04.384+05:30  INFO 24716 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-12T08:09:04.450+05:30  INFO 24716 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 40 ms. Found 0 JPA repository interfaces.
+2026-10-12T08:09:06.781+05:30  INFO 24716 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat initialized with port 0 (http)
+2026-10-12T08:09:06.850+05:30  INFO 24716 --- [url-shortener] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-12T08:09:06.852+05:30  INFO 24716 --- [url-shortener] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/11.0.24]
+2026-10-12T08:09:07.104+05:30  INFO 24716 --- [url-shortener] [           main] b.w.c.s.WebApplicationContextInitializer : Root WebApplicationContext: initialization completed in 5464 ms
+2026-10-12T08:09:09.226+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-12T08:09:10.705+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:urlshortener user=SA
+2026-10-12T08:09:10.723+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-12T08:09:10.798+05:30  INFO 24716 --- [url-shortener] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:urlshortener (H2 2.4)
+2026-10-12T08:09:11.162+05:30  WARN 24716 --- [url-shortener] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-10-12T08:09:11.392+05:30  INFO 24716 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "public"."flyway_schema_history" does not exist yet
+2026-10-12T08:09:11.403+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 1 migration (execution time 00:00.079s)
+2026-10-12T08:09:11.448+05:30  INFO 24716 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "public"."flyway_schema_history" ...
+2026-10-12T08:09:11.599+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": << Empty Schema >>
+2026-10-12T08:09:11.623+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "1 - create links and click events"
+2026-10-12T08:09:11.719+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 1 migration to schema "public", now at version v1 (execution time 00:00.052s)
+2026-10-12T08:09:12.247+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-10-12T08:09:12.614+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000001: Hibernate ORM core version 7.4.5.Final
+2026-10-12T08:09:14.707+05:30  INFO 24716 --- [url-shortener] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-12T08:09:15.056+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:urlshortener]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: urlshortener/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-12T08:09:16.606+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-12T08:09:16.735+05:30  INFO 24716 --- [url-shortener] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-12T08:09:17.819+05:30  WARN 24716 --- [url-shortener] [           main] .s.a.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 37086eaf-5f95-47ba-94c3-2d064f388251
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-12T08:09:17.862+05:30  INFO 24716 --- [url-shortener] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-10-12T08:09:21.386+05:30  INFO 24716 --- [url-shortener] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2026-10-12T08:09:21.639+05:30  INFO 24716 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 55684 (http) with context path '/'
+2026-10-12T08:09:21.670+05:30  INFO 24716 --- [url-shortener] [           main] d.h.shortener.config.SecuritySmokeIT     : Started SecuritySmokeIT in 21.157 seconds (process running for 26.84)
+2026-10-12T08:09:21.894+05:30  WARN 24716 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /v3/api-docs endpoint is enabled by default. To disable it in production, set the property 'springdoc.api-docs.enabled=false'
+2026-10-12T08:09:21.895+05:30  WARN 24716 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /swagger-ui.html endpoint is enabled by default. To disable it in production, set the property 'springdoc.swagger-ui.enabled=false'
+2026-10-12T08:09:23.008+05:30  INFO 24716 --- [url-shortener] [o-auto-1-exec-3] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-12T08:09:23.008+05:30  INFO 24716 --- [url-shortener] [o-auto-1-exec-3] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-12T08:09:23.012+05:30  INFO 24716 --- [url-shortener] [o-auto-1-exec-3] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 24.73 s -- in dev.harshil.shortener.config.SecuritySmokeIT
+[INFO] Running dev.harshil.shortener.UrlShortenerApplicationTest
+2026-10-12T08:09:23.733+05:30  INFO 24716 --- [url-shortener] [           main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [dev.harshil.shortener.UrlShortenerApplicationTest]: UrlShortenerApplicationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-10-12T08:09:23.753+05:30  INFO 24716 --- [url-shortener] [           main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.UrlShortenerApplicationTest
+2026-10-12T08:09:23.756+05:30  INFO 24716 --- [url-shortener] [           main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [dev.harshil.shortener.UrlShortenerApplicationTest]: UrlShortenerApplicationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-10-12T08:09:23.759+05:30  INFO 24716 --- [url-shortener] [           main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.UrlShortenerApplicationTest
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.1.1)
+
+2026-10-12T08:09:23.904+05:30  INFO 24716 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : Starting UrlShortenerApplicationTest using Java 21.0.12.1 with PID 24716 (started by Dell in C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener)
+2026-10-12T08:09:23.904+05:30  INFO 24716 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : The following 1 profile is active: "test"
+2026-10-12T08:09:24.649+05:30  INFO 24716 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-12T08:09:24.671+05:30  INFO 24716 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 16 ms. Found 0 JPA repository interfaces.
+2026-10-12T08:09:25.006+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Starting...
+2026-10-12T08:09:25.009+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:urlshortener user=SA
+2026-10-12T08:09:25.010+05:30  INFO 24716 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Start completed.
+2026-10-12T08:09:25.010+05:30  INFO 24716 --- [url-shortener] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:urlshortener (H2 2.4)
+2026-10-12T08:09:25.022+05:30  WARN 24716 --- [url-shortener] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-10-12T08:09:25.036+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 1 migration (execution time 00:00.008s)
+2026-10-12T08:09:25.042+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": 1
+2026-10-12T08:09:25.043+05:30  INFO 24716 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Schema "public" is up to date. No migration necessary.
+2026-10-12T08:09:25.090+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-10-12T08:09:25.160+05:30  INFO 24716 --- [url-shortener] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-12T08:09:25.163+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:urlshortener]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: urlshortener/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-12T08:09:25.224+05:30  INFO 24716 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-12T08:09:25.232+05:30  INFO 24716 --- [url-shortener] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-12T08:09:25.385+05:30  WARN 24716 --- [url-shortener] [           main] .s.a.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 882821c1-f753-4a74-8300-5b9babe2cd0e
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-12T08:09:25.387+05:30  INFO 24716 --- [url-shortener] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2026-10-12T08:09:25.990+05:30  INFO 24716 --- [url-shortener] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2026-10-12T08:09:26.029+05:30  INFO 24716 --- [url-shortener] [           main] d.h.s.UrlShortenerApplicationTest        : Started UrlShortenerApplicationTest in 2.239 seconds (process running for 31.199)
+2026-10-12T08:09:26.032+05:30  WARN 24716 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /v3/api-docs endpoint is enabled by default. To disable it in production, set the property 'springdoc.api-docs.enabled=false'
+2026-10-12T08:09:26.032+05:30  WARN 24716 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /swagger-ui.html endpoint is enabled by default. To disable it in production, set the property 'springdoc.swagger-ui.enabled=false'
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.352 s -- in dev.harshil.shortener.UrlShortenerApplicationTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- jar:3.5.1:jar (default-jar) @ url-shortener ---
+[INFO] Building jar: C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- spring-boot:4.1.1:repackage (repackage) @ url-shortener ---
+[INFO] Replacing main artifact C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar with repackaged archive, adding nested dependencies in BOOT-INF/.
+[INFO] The original artifact has been renamed to C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\url-shortener-0.1.0-SNAPSHOT.jar.original
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ url-shortener ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ url-shortener ---
+[INFO] Loading execution data file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\jacoco.exec
+[INFO] Analyzed bundle 'url-shortener' with 10 classes
+[INFO] 
+[INFO] --- jacoco:0.8.15:check (jacoco-check) @ url-shortener ---
+[INFO] Loading execution data file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\url-shortener\target\jacoco.exec
+[INFO] Analyzed bundle 'url-shortener' with 10 classes
+[INFO] All coverage checks have been met.
+[INFO] 
+[INFO] >>> spotbugs:4.10.4.1:check (spotbugs-check) > :spotbugs @ url-shortener >>>
+[INFO] 
+[INFO] --- spotbugs:4.10.4.1:spotbugs (spotbugs) @ url-shortener ---
+[INFO] Done SpotBugs Analysis....
+[INFO] Skipping com.github.spotbugs:spotbugs-maven-plugin:4.10.4.1:spotbugs report goal
+[INFO] 
+[INFO] <<< spotbugs:4.10.4.1:check (spotbugs-check) < :spotbugs @ url-shortener <<<
+[INFO] 
+[INFO] 
+[INFO] --- spotbugs:4.10.4.1:check (spotbugs-check) @ url-shortener ---
+[INFO] BugInstance size is 0
+[INFO] Error size is 0
+[INFO] No errors/warnings found
+[INFO] 
+[INFO] ----------------< dev.harshil.shortener:harness-check >-----------------
+[INFO] Building harness-check 0.1.0-SNAPSHOT                              [3/3]
+[INFO]   from harness-check\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ harness-check ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ harness-check ---
+[INFO] Spotless.Java is keeping 28 files clean - 0 needs changes to be clean, 0 were already clean, 28 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ harness-check ---
+[INFO] argLine set to -javaagent:C:\\Users\\Dell\\.m2\\repository\\org\\jacoco\\org.jacoco.agent\\0.8.15\\org.jacoco.agent-0.8.15-runtime.jar=destfile=C:\\Users\\Dell\\ai-workspace\\agentic-sdlc-url-shortener\\harness-check\\target\\jacoco.exec
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ harness-check ---
+[INFO] skip non existing resourceDirectory C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\harness-check\src\main\resources
+[INFO] skip non existing resourceDirectory C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\harness-check\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ harness-check ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ harness-check ---
+[INFO] skip non existing resourceDirectory C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\harness-check\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ harness-check ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ harness-check ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running dev.harshil.shortener.harness.GitRulesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.028 s -- in dev.harshil.shortener.harness.GitRulesTest
+[INFO] Running dev.harshil.shortener.harness.LedgerRulesTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.551 s -- in dev.harshil.shortener.harness.LedgerRulesTest
+[INFO] Running dev.harshil.shortener.harness.ParsingHelpersTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.162 s -- in dev.harshil.shortener.harness.ParsingHelpersTest
+[INFO] Running dev.harshil.shortener.harness.RepositoryScanRulesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.072 s -- in dev.harshil.shortener.harness.RepositoryScanRulesTest
+[INFO] Running dev.harshil.shortener.harness.SyntheticScanAndHistoryTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.434 s -- in dev.harshil.shortener.harness.SyntheticScanAndHistoryTest
+[INFO] Running dev.harshil.shortener.harness.SyntheticTaskLedgerTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.563 s -- in dev.harshil.shortener.harness.SyntheticTaskLedgerTest
+[INFO] Running dev.harshil.shortener.harness.TaskSpecRulesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.084 s -- in dev.harshil.shortener.harness.TaskSpecRulesTest
+[INFO] Running dev.harshil.shortener.harness.TraceabilityReportTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.581 s -- in dev.harshil.shortener.harness.TraceabilityReportTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 41, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- jar:3.5.1:jar (default-jar) @ harness-check ---
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ harness-check ---
+[INFO] Starting audit...
+Audit done.
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- jacoco:0.8.15:report (jacoco-report) @ harness-check ---
+[INFO] Loading execution data file C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\harness-check\target\jacoco.exec
+[INFO] Analyzed bundle 'harness-check' with 23 classes
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for AI-Assisted URL Shortener (reactor) 0.1.0-SNAPSHOT:
+[INFO] 
+[INFO] AI-Assisted URL Shortener (reactor) ................ SUCCESS [  7.375 s]
+[INFO] url-shortener ...................................... SUCCESS [01:31 min]
+[INFO] harness-check ...................................... SUCCESS [ 19.614 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:59 min
+[INFO] Finished at: 2026-10-12T08:10:11+05:30
+[INFO] ------------------------------------------------------------------------
+# exit code 0

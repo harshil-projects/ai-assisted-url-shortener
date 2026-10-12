@@ -182,6 +182,7 @@ entries:
     debug:
       - { hypothesis: "the no-field-injection regex can be written on one line", finding: "the annotation and the field sit on different lines, so RegexpSingleline cannot see both", fix: "RegexpMultiline matching @Autowired followed by a declaration line ending in a semicolon and containing no parenthesis" }
       - { hypothesis: "google_checks AbbreviationAsWordInName accepts test names ending in IT", finding: "refuted. allowedAbbreviationLength 0 flags two consecutive capitals", fix: "allowedAbbreviationLength 1 for the project" }
+      - { hypothesis: "the Ubuntu-only Checkstyle violation on the second CI run is a runner difference", finding: "refuted. The suppression file wrote the path separator class as a single-backslash form, which matches only Linux paths; on Windows the negative lookahead therefore suppressed the Javadoc checks for the api package too, hiding a missing constructor Javadoc on ProblemWriter", fix: "separator class written as a regex-escaped backslash or slash, verified against both path forms; Javadoc added to the constructor; the reason is recorded in the suppressions file" }
     reviewer: Harshil
     started_at: 2026-10-12T01:30:00Z
     finished_at: 2026-10-12T02:45:00Z
@@ -281,6 +282,21 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-201/verify-1.log
+  - task: T-001
+    commit: "5f3e9b1ec7c73c9bcbc581e3ea6c657fa5e76fb5"
+    tree: dirty
+    run_at: "2026-10-12T02:37:57Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-001/verify-3.log
 signoffs:
   - task: T-000
     reasons: [dependency]

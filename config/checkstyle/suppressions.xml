@@ -10,10 +10,15 @@
   adds information and reviewed by hand; a forced one-line Javadoc on every private helper is noise.
   Test sources are exempt from Javadoc and from the method length rule because a readable test
   sometimes lists many cases in one method.
+
+  Path separators: the files pattern is matched against the absolute path, which uses a backslash
+  on Windows and a slash on Linux, so every separator is written as the character class [\\/]
+  (a regex-escaped backslash or a slash). A single-backslash form matches only on Linux and would
+  silently suppress everything on Windows; CI caught exactly that on the first Ubuntu run.
 -->
 <suppressions>
   <suppress checks="MissingJavadocMethod|MissingJavadocType|SummaryJavadoc|JavadocMethod|JavadocParagraph|JavadocTagContinuationIndentation|RequireEmptyLineBeforeBlockTagGroup"
-            files="^(?!.*[\/]url-shortener[\/]src[\/]main[\/]java[\/]dev[\/]harshil[\/]shortener[\/]api[\/]).*$"/>
+            files="^(?!.*[\\/]url-shortener[\\/]src[\\/]main[\\/]java[\\/]dev[\\/]harshil[\\/]shortener[\\/]api[\\/]).*$"/>
   <suppress checks="MethodLength|AbbreviationAsWordInName|VariableDeclarationUsageDistance"
-            files="[\/]src[\/]test[\/]java[\/]"/>
+            files="[\\/]src[\\/]test[\\/]java[\\/]"/>
 </suppressions>
