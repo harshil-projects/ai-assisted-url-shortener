@@ -1,0 +1,19 @@
+# gitleaks configuration for the CI secrets job (design section 4.1, SAI-10).
+# The default rule set stays in force; this file only adds allowlist entries, each with a reason.
+title = "ai-assisted-url-shortener"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholders and throwaway values that are not credentials"
+regexes = [
+  # Spring Boot prints a random password when it auto-configures a default user. The gate logs under
+  # harness/evidence/ captured that line before the default user was removed from the application
+  # (see the T-001 ledger entry). The value was never used by anything and changes on every start.
+  '''Using generated security password: [0-9a-f-]{36}''',
+  # The dev profile default and the test profile key are documented placeholders on the README's
+  # first screen; the prod profile refuses to start without APP_API_KEY (ADR 0007).
+  '''dev-only-key-do-not-use''',
+  '''test-api-key''',
+]
