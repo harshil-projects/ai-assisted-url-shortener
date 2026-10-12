@@ -1,0 +1,687 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java b/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java
+new file mode 100644
+index 0000000..b61f676
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java
+@@ -0,0 +1,159 @@
++package dev.harshil.shortener.api;
++
++import io.swagger.v3.oas.models.Components;
++import io.swagger.v3.oas.models.OpenAPI;
++import io.swagger.v3.oas.models.Operation;
++import io.swagger.v3.oas.models.PathItem;
++import io.swagger.v3.oas.models.headers.Header;
++import io.swagger.v3.oas.models.media.ArraySchema;
++import io.swagger.v3.oas.models.media.Content;
++import io.swagger.v3.oas.models.media.IntegerSchema;
++import io.swagger.v3.oas.models.media.MediaType;
++import io.swagger.v3.oas.models.media.ObjectSchema;
++import io.swagger.v3.oas.models.media.Schema;
++import io.swagger.v3.oas.models.media.StringSchema;
++import io.swagger.v3.oas.models.responses.ApiResponse;
++import io.swagger.v3.oas.models.responses.ApiResponses;
++import java.util.List;
++import org.springdoc.core.customizers.OpenApiCustomizer;
++import org.springframework.http.HttpHeaders;
++import org.springframework.stereotype.Component;
++
++/**
++ * Adds the error catalogue of design section 3.4 to every operation of the generated document.
++ *
++ * <p>Controllers declare only their success responses. The failure modes produced by the filters,
++ * the authentication entry point and the exception handler are the same everywhere, so they are
++ * added here once instead of being repeated in annotations that drift. Every error response points
++ * at one shared {@code ProblemDetail} schema. Operations under {@code /api/} additionally get the
++ * 401. A response an operation already declares for a status is left untouched, so an author can
++ * still document a specific case.
++ */
++@Component
++public class OpenApiErrorCustomizer implements OpenApiCustomizer {
++
++  /** Name of the shared schema under {@code components.schemas}. */
++  public static final String PROBLEM_SCHEMA = "ProblemDetail";
++
++  static final String PROBLEM_MEDIA_TYPE = "application/problem+json";
++  static final String UNAUTHORIZED = "401";
++
++  private static final String API_PREFIX = "/api/";
++  private static final String SCHEMA_REF = "#/components/schemas/" + PROBLEM_SCHEMA;
++  private static final String RETRY_AFTER_DESCRIPTION = "Seconds to wait before retrying";
++
++  /** Added to every operation, in document order. */
++  private static final List<CatalogueEntry> COMMON_ENTRIES =
++      List.of(
++          new CatalogueEntry(
++              "400", "Request validation failed; errors lists the offending fields", null, null),
++          new CatalogueEntry("404", "Link not found", null, null),
++          new CatalogueEntry(
++              "429", "Too many requests", HttpHeaders.RETRY_AFTER, RETRY_AFTER_DESCRIPTION),
++          new CatalogueEntry("500", "Internal error; no stack trace is exposed", null, null),
++          new CatalogueEntry(
++              "503",
++              "Service temporarily unavailable; the database could not be reached",
++              HttpHeaders.RETRY_AFTER,
++              RETRY_AFTER_DESCRIPTION));
++
++  private static final CatalogueEntry UNAUTHORIZED_ENTRY =
++      new CatalogueEntry(
++          UNAUTHORIZED,
++          "Missing or invalid API key",
++          HttpHeaders.WWW_AUTHENTICATE,
++          "Challenge, always ApiKey realm=\"url-shortener\"");
++
++  @Override
++  public void customise(OpenAPI openApi) {
++    components(openApi).addSchemas(PROBLEM_SCHEMA, problemSchema());
++    if (openApi.getPaths() == null) {
++      return;
++    }
++    openApi.getPaths().forEach(OpenApiErrorCustomizer::addErrors);
++  }
++
++  private static Components components(OpenAPI openApi) {
++    if (openApi.getComponents() == null) {
++      openApi.components(new Components());
++    }
++    return openApi.getComponents();
++  }
++
++  private static void addErrors(String path, PathItem item) {
++    for (Operation operation : item.readOperations()) {
++      ApiResponses responses = responsesOf(operation);
++      if (path.startsWith(API_PREFIX)) {
++        responses.putIfAbsent(UNAUTHORIZED_ENTRY.status(), UNAUTHORIZED_ENTRY.toResponse());
++      }
++      for (CatalogueEntry entry : COMMON_ENTRIES) {
++        responses.putIfAbsent(entry.status(), entry.toResponse());
++      }
++    }
++  }
++
++  private static ApiResponses responsesOf(Operation operation) {
++    if (operation.getResponses() == null) {
++      operation.setResponses(new ApiResponses());
++    }
++    return operation.getResponses();
++  }
++
++  private static Schema<?> problemSchema() {
++    return new ObjectSchema()
++        .description("RFC 9457 Problem Details; every error body of this service has this shape.")
++        .addProperty(
++            "type",
++            new StringSchema()
++                .format("uri-reference")
++                .description(
++                    "Problem type relative to the service origin, e.g. /problems/link-not-found"))
++        .addProperty("title", new StringSchema().description("Short, stable summary of the type"))
++        .addProperty("status", new IntegerSchema().description("HTTP status code"))
++        .addProperty(
++            "detail",
++            new StringSchema().description("Human-readable explanation of this occurrence"))
++        .addProperty(
++            "instance",
++            new StringSchema().format("uri-reference").description("Request path, when known"))
++        .addProperty(
++            "requestId",
++            new StringSchema().description("Correlation id, equal to the X-Request-Id header"))
++        .addProperty(
++            "timestamp",
++            new StringSchema().format("date-time").description("When the problem was produced"))
++        .addProperty(
++            "errors",
++            new ArraySchema()
++                .items(fieldErrorSchema())
++                .description("Only on 400: the fields that failed validation"))
++        .required(List.of("type", "status"));
++  }
++
++  private static Schema<?> fieldErrorSchema() {
++    return new ObjectSchema()
++        .addProperty("field", new StringSchema().description("Request field that failed"))
++        .addProperty("message", new StringSchema().description("Why it failed"));
++  }
++
++  /** One row of the error catalogue: the status, its description and an optional header. */
++  private record CatalogueEntry(
++      String status, String description, String headerName, String headerDescription) {
++
++    ApiResponse toResponse() {
++      ApiResponse response =
++          new ApiResponse()
++              .description(description)
++              .content(
++                  new Content()
++                      .addMediaType(
++                          PROBLEM_MEDIA_TYPE,
++                          new MediaType().schema(new Schema<>().$ref(SCHEMA_REF))));
++      if (headerName != null) {
++        response.addHeaderObject(
++            headerName, new Header().description(headerDescription).schema(new StringSchema()));
++      }
++      return response;
++    }
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/OpenApiConfig.java b/url-shortener/src/main/java/dev/harshil/shortener/config/OpenApiConfig.java
+new file mode 100644
+index 0000000..2896f16
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/OpenApiConfig.java
+@@ -0,0 +1,82 @@
++package dev.harshil.shortener.config;
++
++import io.swagger.v3.oas.models.Components;
++import io.swagger.v3.oas.models.OpenAPI;
++import io.swagger.v3.oas.models.info.Info;
++import io.swagger.v3.oas.models.security.SecurityRequirement;
++import io.swagger.v3.oas.models.security.SecurityScheme;
++import io.swagger.v3.oas.models.servers.Server;
++import java.util.List;
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.boot.info.BuildProperties;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++
++/**
++ * Top-level OpenAPI document: title, version, description and the API key scheme (design 3.3,
++ * FR-12).
++ *
++ * <p>The {@code ApiKey} security scheme is declared once and required globally, which is what makes
++ * Swagger UI show its Authorize button and send {@code X-API-Key} on try-it-out calls. The
++ * description states that redirects, health probes and the document itself are public, because the
++ * global requirement alone would suggest otherwise. The version comes from the build info the Maven
++ * plugin writes; without it (an IDE run that skipped the goal) a fixed fallback keeps the document
++ * deterministic for the drift test.
++ */
++@Configuration(proxyBeanMethods = false)
++public class OpenApiConfig {
++
++  static final String TITLE = "URL Shortener API";
++  static final String SECURITY_SCHEME = "ApiKey";
++  static final String API_KEY_HEADER = "X-API-Key";
++  static final String FALLBACK_VERSION = "0.1.0";
++
++  private static final String DESCRIPTION =
++      "Create short links, redirect on them and read their click statistics. "
++          + "Management operations under /api/v1 require the X-API-Key header; redirects "
++          + "(GET /{code}), health probes and this document are public. Every error is an RFC 9457 "
++          + "Problem Details body (application/problem+json) whose requestId equals the "
++          + "X-Request-Id response header.";
++
++  /**
++   * A relative server URL keeps the document identical wherever it is served. Without it springdoc
++   * writes the absolute URL of the current request, including the random port of a test, and the
++   * committed export would never match the runtime.
++   */
++  static final String RELATIVE_SERVER_URL = "/";
++
++  @Bean
++  OpenAPI urlShortenerOpenApi(ObjectProvider<BuildProperties> buildProperties) {
++    return new OpenAPI()
++        .info(
++            new Info()
++                .title(TITLE)
++                .version(resolveVersion(buildProperties))
++                .description(DESCRIPTION))
++        .servers(
++            List.of(
++                new Server()
++                    .url(RELATIVE_SERVER_URL)
++                    .description("The origin this document was served from")))
++        .components(new Components().addSecuritySchemes(SECURITY_SCHEME, apiKeyScheme()))
++        .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME));
++  }
++
++  private static String resolveVersion(ObjectProvider<BuildProperties> buildProperties) {
++    BuildProperties build = buildProperties.getIfAvailable();
++    if (build == null || build.getVersion() == null) {
++      return FALLBACK_VERSION;
++    }
++    return build.getVersion();
++  }
++
++  private static SecurityScheme apiKeyScheme() {
++    return new SecurityScheme()
++        .type(SecurityScheme.Type.APIKEY)
++        .in(SecurityScheme.In.HEADER)
++        .name(API_KEY_HEADER)
++        .description(
++            "Shared API key. Required on /api/v1/** and, in production, on the actuator "
++                + "endpoints other than health.");
++  }
++}
+diff --git a/url-shortener/src/main/resources/application.properties b/url-shortener/src/main/resources/application.properties
+index f3b223d..60e83bc 100644
+--- a/url-shortener/src/main/resources/application.properties
++++ b/url-shortener/src/main/resources/application.properties
+@@ -38,3 +38,13 @@ app.ratelimit.create.period=1m
+ app.request.max-bytes=16384
+ # Whether /actuator/info, /metrics and /prometheus need the API key (health never does).
+ app.security.actuator-requires-api-key=true
++
++# API documentation (springdoc). The export committed at docs/reference/openapi.yaml is compared
++# with /v3/api-docs.yaml by OpenApiIT; keys are written in sorted order so that diff is stable.
++springdoc.api-docs.version=openapi_3_1
++springdoc.swagger-ui.path=/swagger-ui.html
++springdoc.writer-with-order-by-keys=true
++springdoc.show-actuator=false
++springdoc.default-produces-media-type=application/json
++# No petstore sample: Swagger UI loads only this service's document.
++springdoc.swagger-ui.disable-swagger-default-url=true
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/ActuatorIT.java b/url-shortener/src/test/java/dev/harshil/shortener/ActuatorIT.java
+new file mode 100644
+index 0000000..7ca302a
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/ActuatorIT.java
+@@ -0,0 +1,83 @@
++package dev.harshil.shortener;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * The operational endpoints of design section 3.8: public probes, and build info and Prometheus
++ * metrics behind the API key. Build info requires the {@code build-info} Maven goal to have run (it
++ * does in every {@code mvnw} build); an IDE run without it fails the info check on purpose.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class ActuatorIT {
++
++  @Autowired private RestTestClient client;
++
++  @Test
++  void health_isPublicAndUp() {
++    client
++        .get()
++        .uri("/actuator/health")
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.status")
++        .isEqualTo("UP");
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"/actuator/health/liveness", "/actuator/health/readiness"})
++  void probes_arePublicAndUp(String path) {
++    client
++        .get()
++        .uri(path)
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.status")
++        .isEqualTo("UP");
++  }
++
++  @Test
++  void info_withKey_exposesBuildVersion() {
++    client
++        .get()
++        .uri("/actuator/info")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.build.version")
++        .exists()
++        .jsonPath("$.build.artifact")
++        .isEqualTo("url-shortener");
++  }
++
++  @Test
++  void prometheus_withKey_exposesJvmMetrics() {
++    client
++        .get()
++        .uri("/actuator/prometheus")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectBody(String.class)
++        .value(body -> assertThat(body).contains("jvm_memory_used_bytes"));
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java
+new file mode 100644
+index 0000000..6a5fb79
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java
+@@ -0,0 +1,121 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import io.swagger.v3.oas.models.OpenAPI;
++import io.swagger.v3.oas.models.Operation;
++import io.swagger.v3.oas.models.PathItem;
++import io.swagger.v3.oas.models.Paths;
++import io.swagger.v3.oas.models.media.Schema;
++import io.swagger.v3.oas.models.responses.ApiResponse;
++import io.swagger.v3.oas.models.responses.ApiResponses;
++import org.junit.jupiter.api.Test;
++import org.springframework.http.HttpHeaders;
++
++class OpenApiErrorCustomizerTest {
++
++  private final OpenApiErrorCustomizer customizer = new OpenApiErrorCustomizer();
++
++  @Test
++  void customise_apiOperation_getsTheCatalogueIncluding401() {
++    Operation create =
++        new Operation()
++            .responses(
++                new ApiResponses().addApiResponse("201", new ApiResponse().description("Created")));
++    OpenAPI openApi = documentWith("/api/v1/links", new PathItem().post(create));
++
++    customizer.customise(openApi);
++
++    assertThat(create.getResponses().keySet())
++        .containsExactly("201", "401", "400", "404", "429", "500", "503");
++    assertThat(create.getResponses().get("401").getHeaders())
++        .containsKey(HttpHeaders.WWW_AUTHENTICATE);
++    assertThat(create.getResponses().get("429").getHeaders()).containsKey(HttpHeaders.RETRY_AFTER);
++    assertThat(create.getResponses().get("503").getHeaders()).containsKey(HttpHeaders.RETRY_AFTER);
++    assertThat(create.getResponses().get("404").getHeaders()).isNull();
++  }
++
++  @Test
++  void customise_publicOperation_getsTheCatalogueWithout401() {
++    Operation redirect = new Operation();
++    OpenAPI openApi = documentWith("/{code}", new PathItem().get(redirect));
++
++    customizer.customise(openApi);
++
++    assertThat(redirect.getResponses().keySet()).containsExactly("400", "404", "429", "500", "503");
++  }
++
++  @Test
++  void customise_everyAddedResponse_referencesTheSharedProblemSchemaAsProblemJson() {
++    Operation create = new Operation();
++    OpenAPI openApi = documentWith("/api/v1/links", new PathItem().post(create));
++
++    customizer.customise(openApi);
++
++    assertThat(create.getResponses().values())
++        .allSatisfy(
++            response -> {
++              assertThat(response.getDescription()).isNotBlank();
++              Schema<?> schema =
++                  response.getContent().get(OpenApiErrorCustomizer.PROBLEM_MEDIA_TYPE).getSchema();
++              assertThat(schema.get$ref())
++                  .isEqualTo("#/components/schemas/" + OpenApiErrorCustomizer.PROBLEM_SCHEMA);
++            });
++  }
++
++  @Test
++  void customise_responseAlreadyDeclaredForStatus_isLeftUntouched() {
++    ApiResponse authored = new ApiResponse().description("Unknown code, this one is specific");
++    Operation lookup =
++        new Operation().responses(new ApiResponses().addApiResponse("404", authored));
++    OpenAPI openApi = documentWith("/api/v1/links/{code}", new PathItem().get(lookup));
++
++    customizer.customise(openApi);
++
++    assertThat(lookup.getResponses().get("404")).isSameAs(authored);
++  }
++
++  @Test
++  void customise_registersTheSharedProblemSchemaWithTheCatalogueMembers() {
++    OpenAPI openApi = documentWith("/api/v1/links", new PathItem().post(new Operation()));
++
++    customizer.customise(openApi);
++
++    Schema<?> problem =
++        openApi.getComponents().getSchemas().get(OpenApiErrorCustomizer.PROBLEM_SCHEMA);
++    assertThat(problem.getProperties().keySet())
++        .containsExactly(
++            "type", "title", "status", "detail", "instance", "requestId", "timestamp", "errors");
++    // JSON Schema "required" is a set; swagger-core stores it sorted, so order is not asserted.
++    assertThat(problem.getRequired()).containsExactlyInAnyOrder("type", "status");
++    Schema<?> errors = problem.getProperties().get("errors");
++    assertThat(errors.getItems().getProperties().keySet()).containsExactly("field", "message");
++  }
++
++  @Test
++  void customise_documentWithoutPathsOrComponents_onlyRegistersTheSchema() {
++    OpenAPI bare = new OpenAPI();
++
++    customizer.customise(bare);
++
++    assertThat(bare.getComponents().getSchemas())
++        .containsKey(OpenApiErrorCustomizer.PROBLEM_SCHEMA);
++    assertThat(bare.getPaths()).isNull();
++  }
++
++  @Test
++  void customise_appliedTwice_isIdempotent() {
++    Operation create = new Operation();
++    OpenAPI openApi = documentWith("/api/v1/links", new PathItem().post(create));
++
++    customizer.customise(openApi);
++    customizer.customise(openApi);
++
++    assertThat(create.getResponses()).hasSize(6);
++    assertThat(openApi.getComponents().getSchemas()).hasSize(1);
++  }
++
++  private static OpenAPI documentWith(String path, PathItem item) {
++    return new OpenAPI().paths(new Paths().addPathItem(path, item));
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiIT.java
+new file mode 100644
+index 0000000..a6f01c3
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiIT.java
+@@ -0,0 +1,103 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++import dev.harshil.shortener.support.TestProfile;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * Keeps the committed OpenAPI export honest (FR-12, design 4.1).
++ *
++ * <p>{@code docs/reference/openapi.yaml} is what reviewers and client generators read; it must be
++ * byte for byte what the running service serves at {@code /v3/api-docs.yaml}, line endings aside.
++ * Run with {@code -Dopenapi.update=true} the test rewrites the file instead of comparing, which is
++ * the one sanctioned way to change it. Until the file exists, the comparison is skipped with an
++ * assumption rather than failed, so a fresh checkout still builds.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class OpenApiIT {
++
++  /** Surefire runs with the module directory as working directory; the docs live one level up. */
++  private static final Path COMMITTED_SPEC =
++      Path.of("..", "docs", "reference", "openapi.yaml").toAbsolutePath().normalize();
++
++  private static final String UPDATE_PROPERTY = "openapi.update";
++  private static final String UPDATE_COMMAND =
++      "./mvnw.cmd -pl url-shortener -Dtest=OpenApiIT -Dopenapi.update=true test";
++
++  @Autowired private RestTestClient client;
++
++  @Test
++  void apiDocsYaml_isPublicAndDescribesThisService() {
++    String runtime = fetchRuntimeSpec();
++
++    assertThat(runtime)
++        .contains("openapi: 3.1")
++        .contains("title: URL Shortener API")
++        .contains("ProblemDetail:")
++        .contains("ApiKey:")
++        .contains("name: X-API-Key")
++        // The 3.1 writer takes schema types from Schema.types, not Schema.type; a schema built
++        // without them would silently lose its type, so the shared schema's types are checked.
++        .contains("type: object")
++        .contains("type: integer")
++        .contains("type: string")
++        // Only the relative server declared by OpenApiConfig; springdoc's generated absolute URL
++        // would carry this test's random port and break the committed-spec comparison.
++        .contains("url: /")
++        .doesNotContain("Generated server url")
++        .doesNotContain("localhost");
++  }
++
++  @Test
++  void committedSpec_matchesRuntime() throws IOException {
++    String runtime = fetchRuntimeSpec();
++    if (Boolean.getBoolean(UPDATE_PROPERTY)) {
++      Files.createDirectories(COMMITTED_SPEC.getParent());
++      Files.writeString(COMMITTED_SPEC, runtime);
++      return;
++    }
++    assumeTrue(
++        Files.exists(COMMITTED_SPEC),
++        () -> COMMITTED_SPEC + " does not exist yet; generate it with: " + UPDATE_COMMAND);
++
++    String committed = normaliseLineEndings(Files.readString(COMMITTED_SPEC));
++
++    assertThat(runtime)
++        .as(
++            "docs/reference/openapi.yaml no longer matches the running service. Re-export it with:"
++                + " %s and commit the result together with the code change.",
++            UPDATE_COMMAND)
++        .isEqualTo(committed);
++  }
++
++  private String fetchRuntimeSpec() {
++    String body =
++        client
++            .get()
++            .uri("/v3/api-docs.yaml")
++            .exchange()
++            .expectStatus()
++            .isOk()
++            .expectBody(String.class)
++            .returnResult()
++            .getResponseBody();
++    assertThat(body).isNotBlank();
++    return normaliseLineEndings(body);
++  }
++
++  private static String normaliseLineEndings(String text) {
++    return text.replace("\r\n", "\n");
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/OpenApiConfigTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/OpenApiConfigTest.java
+new file mode 100644
+index 0000000..5fb5df5
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/OpenApiConfigTest.java
+@@ -0,0 +1,85 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import io.swagger.v3.oas.models.OpenAPI;
++import io.swagger.v3.oas.models.security.SecurityScheme;
++import java.util.Properties;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.support.DefaultListableBeanFactory;
++import org.springframework.boot.info.BuildProperties;
++
++class OpenApiConfigTest {
++
++  private final OpenApiConfig config = new OpenApiConfig();
++
++  @Test
++  void urlShortenerOpenApi_withBuildInfo_usesTheBuildVersion() {
++    OpenAPI openApi =
++        config.urlShortenerOpenApi(
++            buildFactory(buildProperties("1.2.3")).getBeanProvider(BuildProperties.class));
++
++    assertThat(openApi.getInfo().getTitle()).isEqualTo(OpenApiConfig.TITLE);
++    assertThat(openApi.getInfo().getVersion()).isEqualTo("1.2.3");
++    assertThat(openApi.getInfo().getDescription()).contains("redirects").contains("public");
++  }
++
++  @Test
++  void urlShortenerOpenApi_declaresOnlyARelativeServerSoTheExportIsPortIndependent() {
++    OpenAPI openApi =
++        config.urlShortenerOpenApi(
++            new DefaultListableBeanFactory().getBeanProvider(BuildProperties.class));
++
++    assertThat(openApi.getServers())
++        .singleElement()
++        .satisfies(server -> assertThat(server.getUrl()).isEqualTo("/"));
++  }
++
++  @Test
++  void urlShortenerOpenApi_withoutBuildInfo_fallsBackToTheFixedVersion() {
++    OpenAPI openApi =
++        config.urlShortenerOpenApi(
++            new DefaultListableBeanFactory().getBeanProvider(BuildProperties.class));
++
++    assertThat(openApi.getInfo().getVersion()).isEqualTo(OpenApiConfig.FALLBACK_VERSION);
++  }
++
++  @Test
++  void urlShortenerOpenApi_buildInfoWithoutVersion_fallsBackToTheFixedVersion() {
++    OpenAPI openApi =
++        config.urlShortenerOpenApi(
++            buildFactory(new BuildProperties(new Properties()))
++                .getBeanProvider(BuildProperties.class));
++
++    assertThat(openApi.getInfo().getVersion()).isEqualTo(OpenApiConfig.FALLBACK_VERSION);
++  }
++
++  @Test
++  void urlShortenerOpenApi_declaresApiKeyHeaderSchemeAndRequiresItGlobally() {
++    OpenAPI openApi =
++        config.urlShortenerOpenApi(
++            new DefaultListableBeanFactory().getBeanProvider(BuildProperties.class));
++
++    SecurityScheme scheme =
++        openApi.getComponents().getSecuritySchemes().get(OpenApiConfig.SECURITY_SCHEME);
++    assertThat(scheme.getType()).isEqualTo(SecurityScheme.Type.APIKEY);
++    assertThat(scheme.getIn()).isEqualTo(SecurityScheme.In.HEADER);
++    assertThat(scheme.getName()).isEqualTo(OpenApiConfig.API_KEY_HEADER);
++    assertThat(openApi.getSecurity())
++        .singleElement()
++        .satisfies(
++            requirement -> assertThat(requirement).containsOnlyKeys(OpenApiConfig.SECURITY_SCHEME));
++  }
++
++  private static DefaultListableBeanFactory buildFactory(BuildProperties buildProperties) {
++    DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
++    beanFactory.registerSingleton("buildProperties", buildProperties);
++    return beanFactory;
++  }
++
++  private static BuildProperties buildProperties(String version) {
++    Properties entries = new Properties();
++    entries.setProperty("version", version);
++    return new BuildProperties(entries);
++  }
++}
