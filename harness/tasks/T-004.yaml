@@ -32,13 +32,13 @@ technical_context:
     - api/dto/CreateLinkRequest.java
     - api/dto/LinkResponse.java
     - api/ApiExceptionHandler.java
-    - api/ProblemWriter.java
-    - api/ProblemTypes.java
+    - api/ShortUrlBuilder.java
     - service/LinkService.java
     - service/LinkAllocator.java
     - domain/AliasTakenException.java
-    - config/RequestSizeFilter.java
-    - config/FilterRegistrations.java
+    - domain/CodeGenerationExhaustedException.java
+    - domain/LinkNotFoundException.java
+    - config/ClockConfig.java
   interfaces:
     - "LinkService.create(CreateLinkRequest) -> Link"
     - "LinkAllocator.insert(String code, String url, Instant expiresAt) -> Link"

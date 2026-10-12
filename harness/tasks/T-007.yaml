@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement]
 impact: high
 impact_reasons: [security, dependency]
-status: todo
+status: done
 depends_on: [T-004]
 intent: >
   Protect /api/v1/** and the prod actuator with a stateless API key filter built inside
@@ -29,10 +29,15 @@ acceptance_criteria:
 technical_context:
   files:
     - config/SecurityConfig.java
+    - config/ApiKeyFilter.java
     - config/RateLimitFilter.java
+    - config/RequestSizeFilter.java
+    - config/RequestIdFilter.java
     - config/FilterRegistrations.java
     - config/AppProperties.java
     - api/ProblemWriter.java
+    - api/ProblemDetails.java
+    - api/ProblemTypes.java
     - url-shortener/pom.xml
     - url-shortener/src/main/resources/application.properties
     - url-shortener/src/main/resources/application-dev.properties

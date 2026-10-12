@@ -205,6 +205,59 @@ entries:
     reviewer: Harshil
     started_at: 2026-10-12T01:15:00Z
     finished_at: 2026-10-12T02:50:00Z
+  - task: T-007
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-007/v1.md
+    raw_output: harness/evidence/T-007/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/SecurityConfig.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/ApiKeyFilter.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/RequestIdFilter.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/RequestSizeFilter.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/RateLimitFilter.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/FilterRegistrations.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/AppProperties.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ProblemWriter.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ProblemDetails.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ProblemTypes.java, status: generated }
+      - { path: url-shortener/src/main/resources/application.properties, status: generated }
+      - { path: url-shortener/src/main/resources/application-dev.properties, status: generated }
+      - { path: url-shortener/src/main/resources/application-prod.properties, status: generated }
+      - { path: url-shortener/src/test/resources/application-test.properties, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/ApiKeyIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/SecurityHeadersIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/ProblemDetailIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/ProdStartupIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/RequestIdFilterTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/RequestSizeFilterTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitFilterTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/AppPropertiesTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ProblemDetailsTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/support/TestApiKey.java, status: generated }
+    rationale: >
+      Engineer-asserted. The security chain, the API key filter, the Problem Details support and the
+      properties were drafted in the interactive T-000 session and reviewed against design 3.3, 3.6,
+      3.7 and 3.9 (constant-time compare, filter not a bean, CSRF reason, three chains). The three
+      request filters, their registrations and the ten test classes were drafted in a parallel
+      worktree session from prompt v1 and kept exactly as drafted: every file was read in full, the
+      filter order and the regex allow-list match the design, and the tests cover each acceptance
+      criterion. The engineer's only change was deleting the skeleton SecuritySmokeIT, whose five
+      assertions are repeated by ApiKeyIT and SecurityHeadersIT. Coordinates verified on Maven
+      Central: https://repo1.maven.org/maven2/com/bucket4j/bucket4j_jdk17-core/8.21.0/ and Caffeine
+      managed by the Boot BOM. Review artifact harness/reviews/T-007.md.
+    rejected_notes:
+      - SecuritySmokeIT (skeleton, engineer-authored in T-000) removed as a duplicate of ApiKeyIT and SecurityHeadersIT; not an AI-drafted file of this task
+    debug:
+      - { hypothesis: "SecurityProperties.DEFAULT_FILTER_ORDER exists in Boot 4 as in Boot 3", finding: "refuted. The constant moved to org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties with the same value -100", fix: "FilterRegistrations references the Boot 4 class; recorded in AGENTS.md gotchas" }
+      - { hypothesis: "HttpStatus.PAYLOAD_TOO_LARGE is the 413 constant", finding: "refuted. Spring Framework 7 renamed it CONTENT_TOO_LARGE following RFC 9110", fix: "use CONTENT_TOO_LARGE" }
+      - { hypothesis: "a cached ServletInputStream in the body wrapper is fine", finding: "SpotBugs flagged EI_EXPOSE_REP on returning the cached stream", fix: "a fresh stream per getInputStream call, as Spring's ContentCachingRequestWrapper does" }
+      - { hypothesis: "Boot creates no default user when a SecurityFilterChain is defined", finding: "refuted by the gitleaks CI job, which flagged the generated password Boot logged at startup", fix: "UserDetailsServiceAutoConfiguration excluded in application.properties" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T03:40:00Z
 gates:
   - task: T-000
     commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
@@ -298,6 +351,21 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-001/verify-3.log
+  - task: T-007
+    commit: "ea6a516e9bf243bf82899571eb22d82aca27ded2"
+    tree: dirty
+    run_at: "2026-10-12T03:09:18Z"
+    overall: pass
+    results:
+      format: pass
+      style: pass
+      sast: pass
+      tests: pass
+      coverage: pass
+      traceability: pass
+      secrets: pass
+      perf: "skipped: opt-in profile not run"
+    log: harness/evidence/T-007/verify-1.log
 signoffs:
   - task: T-000
     reasons: [dependency]
@@ -315,3 +383,12 @@ signoffs:
     statement: >
       Gate configuration reviewed against design section 4.1; each gate seen failing for a real cause
       in the pre-gate logs; every SpotBugs exclusion carries a reason and a re-enable condition.
+  - task: T-007
+    reasons: [security, dependency]
+    review: harness/reviews/T-007.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T03:42:00Z
+    statement: >
+      Security chain, filters and their order reviewed against design sections 3.6 and 3.7; every
+      acceptance criterion has a passing test; the CSRF exclusion carries its reason; Bucket4j
+      coordinate verified on Maven Central.

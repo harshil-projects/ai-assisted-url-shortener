@@ -1,5 +1,8 @@
 package dev.harshil.shortener.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import dev.harshil.shortener.support.TestApiKey;
 import dev.harshil.shortener.support.TestProfile;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,24 +10,24 @@ import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTe
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 /**
- * Proves the security skeleton end to end over HTTP: the API key gate, the Problem Details body
- * written by the filter, public health, and the default security headers.
+ * The API key gate over HTTP (FR-10, ADR 0007): what is protected, what is public, and how a
+ * rejection looks. Success paths assert "not 401" because controllers are not part of this slice of
+ * the work; once they exist the same requests return 200 or 404.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @AutoConfigureRestTestClient
 @TestProfile
-class SecuritySmokeIT {
-
-  private static final String API_KEY = "test-api-key";
+class ApiKeyIT {
 
   @Autowired private RestTestClient client;
 
   @Test
-  void protectedPath_withoutKey_returns401ProblemWithChallenge() {
+  void apiPath_withoutKey_returns401ProblemWithChallenge() {
     client
         .get()
         .uri("/api/v1/links/abcdefg")
@@ -38,20 +41,16 @@ class SecuritySmokeIT {
         .expectBody()
         .jsonPath("$.type")
         .isEqualTo("/problems/unauthorized")
-        .jsonPath("$.title")
-        .isEqualTo("Missing or invalid API key")
         .jsonPath("$.status")
-        .isEqualTo(401)
-        .jsonPath("$.timestamp")
-        .exists();
+        .isEqualTo(401);
   }
 
   @Test
-  void protectedPath_withWrongKey_returns401() {
+  void apiPath_withWrongKey_returns401WithChallenge() {
     client
         .get()
         .uri("/api/v1/links/abcdefg")
-        .header(ApiKeyFilter.HEADER, "not-the-key")
+        .header(TestApiKey.HEADER, "not-the-key")
         .exchange()
         .expectStatus()
         .isUnauthorized()
@@ -60,40 +59,42 @@ class SecuritySmokeIT {
   }
 
   @Test
-  void protectedPath_withValidKey_passesAuthentication() {
-    // No controller is mapped yet in the skeleton, so passing the gate surfaces as 404, not 401.
+  void apiPath_withValidKey_passesAuthentication() {
     client
         .get()
         .uri("/api/v1/links/abcdefg")
-        .header(ApiKeyFilter.HEADER, API_KEY)
+        .header(TestApiKey.HEADER, TestApiKey.VALUE)
         .exchange()
         .expectStatus()
-        .isNotFound();
+        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.UNAUTHORIZED.value()))
+        .expectHeader()
+        .doesNotExist(HttpHeaders.WWW_AUTHENTICATE);
   }
 
   @Test
-  void health_isPublicAndCarriesSecurityHeaders() {
+  void redirectPath_withoutKey_isNotChallenged() {
     client
         .get()
-        .uri("/actuator/health")
+        .uri("/abcdefg")
         .exchange()
         .expectStatus()
-        .isOk()
+        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.UNAUTHORIZED.value()))
         .expectHeader()
-        .valueEquals("X-Content-Type-Options", "nosniff")
-        .expectHeader()
-        .valueEquals("X-Frame-Options", "DENY")
-        .expectHeader()
-        .valueEquals("Referrer-Policy", "no-referrer");
+        .doesNotExist(HttpHeaders.WWW_AUTHENTICATE);
   }
 
   @Test
-  void metrics_requireKeyUnderTestProfile() {
-    client.get().uri("/actuator/metrics").exchange().expectStatus().isUnauthorized();
+  void health_withoutKey_isPublic() {
+    client.get().uri("/actuator/health").exchange().expectStatus().isOk();
+  }
+
+  @Test
+  void prometheus_underTestProfile_requiresTheKey() {
+    client.get().uri("/actuator/prometheus").exchange().expectStatus().isUnauthorized();
     client
         .get()
-        .uri("/actuator/metrics")
-        .header(ApiKeyFilter.HEADER, API_KEY)
+        .uri("/actuator/prometheus")
+        .header(TestApiKey.HEADER, TestApiKey.VALUE)
         .exchange()
         .expectStatus()
         .isOk();

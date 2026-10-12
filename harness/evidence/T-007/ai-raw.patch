@@ -1,0 +1,1666 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/FilterRegistrations.java b/url-shortener/src/main/java/dev/harshil/shortener/config/FilterRegistrations.java
+new file mode 100644
+index 0000000..71d0b77
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/FilterRegistrations.java
+@@ -0,0 +1,59 @@
++package dev.harshil.shortener.config;
++
++import dev.harshil.shortener.api.ProblemWriter;
++import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties;
++import org.springframework.boot.web.servlet.FilterRegistrationBean;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++import org.springframework.core.Ordered;
++
++/**
++ * Registers the three request filters exactly once and in a fixed order (design 3.6, 3.7).
++ *
++ * <p>The filters are plain classes, not {@code @Component}s: Boot registers every {@code Filter}
++ * bean it finds, so a filter that is both a bean and registered here would run twice. Explicit
++ * registration also makes the order a reviewable constant instead of an annotation side effect:
++ *
++ * <ol>
++ *   <li>{@link RequestIdFilter} first, so every later response, including rejections, carries the
++ *       correlation id;
++ *   <li>{@link RequestSizeFilter}, so an oversized body is refused before anything reads it;
++ *   <li>{@link RateLimitFilter}, last before Spring Security's chain, so unauthenticated floods and
++ *       key guessing are throttled too.
++ * </ol>
++ */
++@Configuration(proxyBeanMethods = false)
++public class FilterRegistrations {
++
++  /** Runs after the request id filter and before the rate limiter. */
++  static final int REQUEST_SIZE_ORDER = SecurityFilterProperties.DEFAULT_FILTER_ORDER - 20;
++
++  /** The last filter before the Spring Security chain. */
++  static final int RATE_LIMIT_ORDER = SecurityFilterProperties.DEFAULT_FILTER_ORDER - 10;
++
++  @Bean
++  FilterRegistrationBean<RequestIdFilter> requestIdFilterRegistration() {
++    FilterRegistrationBean<RequestIdFilter> registration =
++        new FilterRegistrationBean<>(new RequestIdFilter());
++    registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
++    return registration;
++  }
++
++  @Bean
++  FilterRegistrationBean<RequestSizeFilter> requestSizeFilterRegistration(
++      AppProperties properties, ProblemWriter problemWriter) {
++    FilterRegistrationBean<RequestSizeFilter> registration =
++        new FilterRegistrationBean<>(new RequestSizeFilter(properties, problemWriter));
++    registration.setOrder(REQUEST_SIZE_ORDER);
++    return registration;
++  }
++
++  @Bean
++  FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(
++      AppProperties properties, ProblemWriter problemWriter) {
++    FilterRegistrationBean<RateLimitFilter> registration =
++        new FilterRegistrationBean<>(new RateLimitFilter(properties, problemWriter));
++    registration.setOrder(RATE_LIMIT_ORDER);
++    return registration;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/RateLimitFilter.java b/url-shortener/src/main/java/dev/harshil/shortener/config/RateLimitFilter.java
+new file mode 100644
+index 0000000..ebf3ddb
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/RateLimitFilter.java
+@@ -0,0 +1,134 @@
++package dev.harshil.shortener.config;
++
++import com.github.benmanes.caffeine.cache.Cache;
++import com.github.benmanes.caffeine.cache.Caffeine;
++import dev.harshil.shortener.api.ProblemDetails;
++import dev.harshil.shortener.api.ProblemTypes;
++import dev.harshil.shortener.api.ProblemWriter;
++import io.github.bucket4j.Bandwidth;
++import io.github.bucket4j.Bucket;
++import io.github.bucket4j.ConsumptionProbe;
++import io.github.bucket4j.TimeMeter;
++import jakarta.servlet.FilterChain;
++import jakarta.servlet.ServletException;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.servlet.http.HttpServletResponse;
++import java.io.IOException;
++import java.time.Duration;
++import java.util.Map;
++import java.util.concurrent.TimeUnit;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpMethod;
++import org.springframework.http.HttpStatus;
++import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
++import org.springframework.security.web.util.matcher.RequestMatcher;
++import org.springframework.web.filter.OncePerRequestFilter;
++
++/**
++ * Throttles {@code POST /api/v1/links} per client address (design 3.6, 3.7; FR-11, NFR-05).
++ *
++ * <p>One Bucket4j token bucket per {@code remoteAddr}, held in a bounded Caffeine cache so a client
++ * rotating source addresses cannot grow memory without limit; idle buckets expire. The filter runs
++ * before the Spring Security chain, so unauthenticated floods, including API key guessing, are
++ * throttled too. Capacity and period come from {@code app.ratelimit.create.*}; the refill is greedy
++ * (tokens trickle back continuously rather than all at once). Every handled request carries {@code
++ * X-RateLimit-Limit} and {@code X-RateLimit-Remaining}; a rejected one gets a 429 Problem Details
++ * body with {@code Retry-After} and {@code X-RateLimit-Reset}, both in whole seconds.
++ *
++ * <p>The client address is the socket peer because {@code server.forward-headers-strategy=NONE};
++ * behind a trusted proxy that property, not this class, is what changes. Registered through {@link
++ * FilterRegistrations}; deliberately not a Spring bean.
++ */
++public final class RateLimitFilter extends OncePerRequestFilter {
++
++  static final String LIMIT_HEADER = "X-RateLimit-Limit";
++  static final String REMAINING_HEADER = "X-RateLimit-Remaining";
++  static final String RESET_HEADER = "X-RateLimit-Reset";
++
++  private static final RequestMatcher CREATE_LINK =
++      PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/v1/links");
++  private static final long MAX_TRACKED_CLIENTS = 10_000;
++  private static final Duration IDLE_CLIENT_EXPIRY = Duration.ofMinutes(10);
++  private static final long MIN_WAIT_SECONDS = 1;
++  private static final long NANOS_PER_SECOND = TimeUnit.SECONDS.toNanos(1);
++
++  private final AppProperties.RateLimit.Create limit;
++  private final ProblemWriter problemWriter;
++  private final TimeMeter timeMeter;
++  private final Cache<String, Bucket> bucketsByClient;
++
++  public RateLimitFilter(AppProperties properties, ProblemWriter problemWriter) {
++    this(properties.ratelimit().create(), problemWriter, TimeMeter.SYSTEM_MILLISECONDS);
++  }
++
++  /** Test seam: a controllable {@link TimeMeter} makes refill timing deterministic. */
++  RateLimitFilter(
++      AppProperties.RateLimit.Create limit, ProblemWriter problemWriter, TimeMeter timeMeter) {
++    this.limit = limit;
++    this.problemWriter = problemWriter;
++    this.timeMeter = timeMeter;
++    this.bucketsByClient =
++        Caffeine.newBuilder()
++            .maximumSize(MAX_TRACKED_CLIENTS)
++            .expireAfterAccess(IDLE_CLIENT_EXPIRY)
++            .build();
++  }
++
++  @Override
++  protected boolean shouldNotFilter(HttpServletRequest request) {
++    return !CREATE_LINK.matches(request);
++  }
++
++  @Override
++  protected void doFilterInternal(
++      HttpServletRequest request, HttpServletResponse response, FilterChain chain)
++      throws ServletException, IOException {
++    Bucket bucket = bucketsByClient.get(request.getRemoteAddr(), address -> newBucket());
++    ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
++    response.setHeader(LIMIT_HEADER, Integer.toString(limit.capacity()));
++    response.setHeader(REMAINING_HEADER, Long.toString(probe.getRemainingTokens()));
++    if (probe.isConsumed()) {
++      chain.doFilter(request, response);
++      return;
++    }
++    reject(response, probe);
++  }
++
++  private Bucket newBucket() {
++    Bandwidth bandwidth =
++        Bandwidth.builder()
++            .capacity(limit.capacity())
++            .refillGreedy(limit.capacity(), limit.period())
++            .build();
++    return Bucket.builder().addLimit(bandwidth).withCustomTimePrecision(timeMeter).build();
++  }
++
++  private void reject(HttpServletResponse response, ConsumptionProbe probe) throws IOException {
++    long retryAfterSeconds = wholeSeconds(probe.getNanosToWaitForRefill());
++    long resetSeconds = wholeSeconds(probe.getNanosToWaitForReset());
++    problemWriter.write(
++        response,
++        ProblemDetails.of(
++            HttpStatus.TOO_MANY_REQUESTS,
++            ProblemTypes.RATE_LIMITED,
++            "Too many requests",
++            "The limit of "
++                + limit.capacity()
++                + " link creations per "
++                + limit.period().toSeconds()
++                + " seconds was exceeded; retry after "
++                + retryAfterSeconds
++                + " seconds."),
++        Map.of(
++            HttpHeaders.RETRY_AFTER,
++            Long.toString(retryAfterSeconds),
++            RESET_HEADER,
++            Long.toString(resetSeconds)));
++  }
++
++  /** Rounds a wait up to whole seconds and never below one, as {@code Retry-After} requires. */
++  private static long wholeSeconds(long nanos) {
++    long roundedUp = (nanos + NANOS_PER_SECOND - 1) / NANOS_PER_SECOND;
++    return Math.max(MIN_WAIT_SECONDS, roundedUp);
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/RequestIdFilter.java b/url-shortener/src/main/java/dev/harshil/shortener/config/RequestIdFilter.java
+new file mode 100644
+index 0000000..f9fd0a9
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/RequestIdFilter.java
+@@ -0,0 +1,54 @@
++package dev.harshil.shortener.config;
++
++import dev.harshil.shortener.api.ProblemDetails;
++import jakarta.servlet.FilterChain;
++import jakarta.servlet.ServletException;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.servlet.http.HttpServletResponse;
++import java.io.IOException;
++import java.util.UUID;
++import java.util.regex.Pattern;
++import org.slf4j.MDC;
++import org.springframework.web.filter.OncePerRequestFilter;
++
++/**
++ * Gives every request a correlation id (design section 3.8).
++ *
++ * <p>A client may supply its own {@code X-Request-Id}. It is accepted only when it is 1 to 64
++ * characters of {@code [A-Za-z0-9-]}; that rules out header injection and log forging (CWE-113,
++ * CWE-117) before the value is echoed or written to the MDC. Anything else is replaced by a random
++ * UUID. The id is put on the response before the chain runs so it is present on every response,
++ * including rejections written by later filters, and it is removed from the MDC in {@code finally}
++ * so a pooled thread never carries it into the next request.
++ *
++ * <p>Registered first through {@link FilterRegistrations}; deliberately not a Spring bean,
++ * otherwise Boot would register it a second time.
++ */
++public final class RequestIdFilter extends OncePerRequestFilter {
++
++  /** Request and response header carrying the correlation id. */
++  public static final String HEADER = "X-Request-Id";
++
++  private static final Pattern WELL_FORMED_CLIENT_ID = Pattern.compile("^[A-Za-z0-9-]{1,64}$");
++
++  @Override
++  protected void doFilterInternal(
++      HttpServletRequest request, HttpServletResponse response, FilterChain chain)
++      throws ServletException, IOException {
++    String requestId = resolve(request.getHeader(HEADER));
++    MDC.put(ProblemDetails.REQUEST_ID, requestId);
++    response.setHeader(HEADER, requestId);
++    try {
++      chain.doFilter(request, response);
++    } finally {
++      MDC.remove(ProblemDetails.REQUEST_ID);
++    }
++  }
++
++  private static String resolve(String clientValue) {
++    if (clientValue != null && WELL_FORMED_CLIENT_ID.matcher(clientValue).matches()) {
++      return clientValue;
++    }
++    return UUID.randomUUID().toString();
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/RequestSizeFilter.java b/url-shortener/src/main/java/dev/harshil/shortener/config/RequestSizeFilter.java
+new file mode 100644
+index 0000000..db1bf5e
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/RequestSizeFilter.java
+@@ -0,0 +1,186 @@
++package dev.harshil.shortener.config;
++
++import dev.harshil.shortener.api.ProblemDetails;
++import dev.harshil.shortener.api.ProblemTypes;
++import dev.harshil.shortener.api.ProblemWriter;
++import jakarta.servlet.FilterChain;
++import jakarta.servlet.ReadListener;
++import jakarta.servlet.ServletException;
++import jakarta.servlet.ServletInputStream;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.servlet.http.HttpServletRequestWrapper;
++import jakarta.servlet.http.HttpServletResponse;
++import java.io.BufferedReader;
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import org.springframework.http.HttpStatus;
++import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
++import org.springframework.security.web.util.matcher.RequestMatcher;
++import org.springframework.web.filter.OncePerRequestFilter;
++
++/**
++ * Caps request bodies on the management API at {@code app.request.max-bytes} (design 3.6, 3.7).
++ *
++ * <p>Two paths. When the client declares {@code Content-Length} the decision is taken from the
++ * header alone and an oversized body is never read. When the length is unknown (chunked transfer)
++ * the body is read up to one byte past the limit, so a client cannot stream an unbounded body past
++ * the check, and an accepted body is replayed to the rest of the chain through a wrapper. The 413
++ * is written through {@link ProblemWriter} so it has the same shape as every other error.
++ *
++ * <p>Registered through {@link FilterRegistrations} ahead of the rate limiter and the security
++ * chain; deliberately not a Spring bean.
++ */
++public final class RequestSizeFilter extends OncePerRequestFilter {
++
++  private static final RequestMatcher API_PATHS =
++      PathPatternRequestMatcher.withDefaults().matcher("/api/v1/**");
++
++  /** What the servlet API reports when no {@code Content-Length} header is present. */
++  private static final long UNKNOWN_LENGTH = -1;
++
++  private final long maxBytes;
++  private final ProblemWriter problemWriter;
++
++  public RequestSizeFilter(AppProperties properties, ProblemWriter problemWriter) {
++    this.maxBytes = properties.request().maxBytes();
++    this.problemWriter = problemWriter;
++  }
++
++  @Override
++  protected boolean shouldNotFilter(HttpServletRequest request) {
++    return !API_PATHS.matches(request);
++  }
++
++  @Override
++  protected void doFilterInternal(
++      HttpServletRequest request, HttpServletResponse response, FilterChain chain)
++      throws ServletException, IOException {
++    long declaredLength = request.getContentLengthLong();
++    if (declaredLength > maxBytes) {
++      reject(response);
++      return;
++    }
++    if (declaredLength != UNKNOWN_LENGTH) {
++      chain.doFilter(request, response);
++      return;
++    }
++    byte[] body = request.getInputStream().readNBytes(limitPlusOne());
++    if (body.length > maxBytes) {
++      reject(response);
++      return;
++    }
++    chain.doFilter(new BufferedBodyRequest(request, body), response);
++  }
++
++  /** One byte more than the limit, so the over-limit check is decisive; clamped to an int. */
++  private int limitPlusOne() {
++    return (int) Math.min(maxBytes + 1, Integer.MAX_VALUE);
++  }
++
++  private void reject(HttpServletResponse response) throws IOException {
++    problemWriter.write(
++        response,
++        ProblemDetails.of(
++            HttpStatus.CONTENT_TOO_LARGE,
++            ProblemTypes.PAYLOAD_TOO_LARGE,
++            "Request body too large",
++            "The request body must not exceed " + maxBytes + " bytes."));
++  }
++
++  /**
++   * Replays a fully buffered body. Honours the servlet contract that a request exposes either its
++   * input stream or its reader, never both, and reports the buffered size as the content length so
++   * downstream code sees a request with a known body.
++   */
++  static final class BufferedBodyRequest extends HttpServletRequestWrapper {
++
++    private final byte[] body;
++    private boolean streamOpened;
++    private boolean readerOpened;
++
++    BufferedBodyRequest(HttpServletRequest request, byte[] body) {
++      super(request);
++      this.body = body;
++    }
++
++    /** Each call starts a fresh read of the buffer, as Spring's own caching wrapper does. */
++    @Override
++    public ServletInputStream getInputStream() {
++      if (readerOpened) {
++        throw new IllegalStateException("getReader() has already been called on this request");
++      }
++      streamOpened = true;
++      return new ByteArrayServletInputStream(body);
++    }
++
++    @Override
++    public BufferedReader getReader() throws IOException {
++      if (streamOpened) {
++        throw new IllegalStateException("getInputStream() has already been called on this request");
++      }
++      readerOpened = true;
++      return new BufferedReader(newBodyReader());
++    }
++
++    @Override
++    public int getContentLength() {
++      return body.length;
++    }
++
++    @Override
++    public long getContentLengthLong() {
++      return body.length;
++    }
++
++    /** Decodes with the request's charset; UTF-8 when none is named, as JSON is decoded. */
++    private InputStreamReader newBodyReader() throws IOException {
++      String encoding = getCharacterEncoding();
++      if (encoding == null) {
++        return new InputStreamReader(new ByteArrayInputStream(body), StandardCharsets.UTF_8);
++      }
++      return new InputStreamReader(new ByteArrayInputStream(body), encoding);
++    }
++  }
++
++  /** Blocking {@link ServletInputStream} over an in-memory buffer; no async read support. */
++  static final class ByteArrayServletInputStream extends ServletInputStream {
++
++    private final ByteArrayInputStream delegate;
++
++    ByteArrayServletInputStream(byte[] body) {
++      this.delegate = new ByteArrayInputStream(body);
++    }
++
++    @Override
++    public int read() {
++      return delegate.read();
++    }
++
++    @Override
++    public int read(byte[] buffer, int offset, int length) {
++      return delegate.read(buffer, offset, length);
++    }
++
++    @Override
++    public int available() {
++      return delegate.available();
++    }
++
++    @Override
++    public boolean isFinished() {
++      return delegate.available() == 0;
++    }
++
++    @Override
++    public boolean isReady() {
++      return true;
++    }
++
++    @Override
++    public void setReadListener(ReadListener listener) {
++      throw new IllegalStateException("Buffered request bodies do not support asynchronous reads");
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/ApiKeyIT.java b/url-shortener/src/test/java/dev/harshil/shortener/config/ApiKeyIT.java
+new file mode 100644
+index 0000000..e2e942f
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/ApiKeyIT.java
+@@ -0,0 +1,102 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * The API key gate over HTTP (FR-10, ADR 0007): what is protected, what is public, and how a
++ * rejection looks. Success paths assert "not 401" because controllers are not part of this slice of
++ * the work; once they exist the same requests return 200 or 404.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class ApiKeyIT {
++
++  @Autowired private RestTestClient client;
++
++  @Test
++  void apiPath_withoutKey_returns401ProblemWithChallenge() {
++    client
++        .get()
++        .uri("/api/v1/links/abcdefg")
++        .exchange()
++        .expectStatus()
++        .isUnauthorized()
++        .expectHeader()
++        .valueEquals(HttpHeaders.WWW_AUTHENTICATE, ApiKeyFilter.CHALLENGE)
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/unauthorized")
++        .jsonPath("$.status")
++        .isEqualTo(401);
++  }
++
++  @Test
++  void apiPath_withWrongKey_returns401WithChallenge() {
++    client
++        .get()
++        .uri("/api/v1/links/abcdefg")
++        .header(TestApiKey.HEADER, "not-the-key")
++        .exchange()
++        .expectStatus()
++        .isUnauthorized()
++        .expectHeader()
++        .valueEquals(HttpHeaders.WWW_AUTHENTICATE, ApiKeyFilter.CHALLENGE);
++  }
++
++  @Test
++  void apiPath_withValidKey_passesAuthentication() {
++    client
++        .get()
++        .uri("/api/v1/links/abcdefg")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.UNAUTHORIZED.value()))
++        .expectHeader()
++        .doesNotExist(HttpHeaders.WWW_AUTHENTICATE);
++  }
++
++  @Test
++  void redirectPath_withoutKey_isNotChallenged() {
++    client
++        .get()
++        .uri("/abcdefg")
++        .exchange()
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.UNAUTHORIZED.value()))
++        .expectHeader()
++        .doesNotExist(HttpHeaders.WWW_AUTHENTICATE);
++  }
++
++  @Test
++  void health_withoutKey_isPublic() {
++    client.get().uri("/actuator/health").exchange().expectStatus().isOk();
++  }
++
++  @Test
++  void prometheus_underTestProfile_requiresTheKey() {
++    client.get().uri("/actuator/prometheus").exchange().expectStatus().isUnauthorized();
++    client
++        .get()
++        .uri("/actuator/prometheus")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectStatus()
++        .isOk();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/AppPropertiesTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/AppPropertiesTest.java
+index e629857..a975fd8 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/config/AppPropertiesTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/AppPropertiesTest.java
+@@ -3,12 +3,28 @@ package dev.harshil.shortener.config;
+ import static org.assertj.core.api.Assertions.assertThat;
+ 
+ import java.time.Duration;
++import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.params.ParameterizedTest;
+ import org.junit.jupiter.params.provider.NullAndEmptySource;
+ import org.junit.jupiter.params.provider.ValueSource;
++import org.springframework.boot.context.properties.EnableConfigurationProperties;
++import org.springframework.boot.context.properties.bind.validation.BindValidationException;
++import org.springframework.boot.test.context.runner.ApplicationContextRunner;
++import org.springframework.context.annotation.Configuration;
+ 
+ class AppPropertiesTest {
+ 
++  private static final String[] VALID_EXCEPT_KEY = {
++    "app.base-url=https://sho.rt",
++    "app.ratelimit.create.capacity=5",
++    "app.ratelimit.create.period=30s",
++    "app.request.max-bytes=1024",
++    "app.security.actuator-requires-api-key=false"
++  };
++
++  private final ApplicationContextRunner runner =
++      new ApplicationContextRunner().withUserConfiguration(PropertiesHolder.class);
++
+   @ParameterizedTest
+   @NullAndEmptySource
+   @ValueSource(strings = {"   "})
+@@ -22,6 +38,59 @@ class AppPropertiesTest {
+     assertThat(properties(baseUrl).hasBaseUrl()).isTrue();
+   }
+ 
++  @Test
++  void binding_validPropertySet_bindsEveryGroup() {
++    runner
++        .withPropertyValues(VALID_EXCEPT_KEY)
++        .withPropertyValues("app.api-key=secret")
++        .run(
++            context -> {
++              assertThat(context).hasNotFailed();
++              AppProperties bound = context.getBean(AppProperties.class);
++              assertThat(bound.apiKey()).isEqualTo("secret");
++              assertThat(bound.baseUrl()).isEqualTo("https://sho.rt");
++              assertThat(bound.ratelimit().create())
++                  .isEqualTo(new AppProperties.RateLimit.Create(5, Duration.ofSeconds(30)));
++              assertThat(bound.request().maxBytes()).isEqualTo(1024);
++              assertThat(bound.security().actuatorRequiresApiKey()).isFalse();
++            });
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"", "   "})
++  void binding_blankApiKey_failsValidationNamingTheField(String blankKey) {
++    runner
++        .withPropertyValues(VALID_EXCEPT_KEY)
++        .withPropertyValues("app.api-key=" + blankKey)
++        .run(
++            context -> {
++              assertThat(context).hasFailed();
++              assertThat(context.getStartupFailure())
++                  .rootCause()
++                  .isInstanceOf(BindValidationException.class)
++                  .hasMessageContaining("apiKey");
++            });
++  }
++
++  @Test
++  void binding_nonPositiveCapacity_failsValidation() {
++    runner
++        .withPropertyValues(
++            "app.api-key=secret",
++            "app.ratelimit.create.capacity=0",
++            "app.ratelimit.create.period=30s",
++            "app.request.max-bytes=1024",
++            "app.security.actuator-requires-api-key=false")
++        .run(
++            context -> {
++              assertThat(context).hasFailed();
++              assertThat(context.getStartupFailure())
++                  .rootCause()
++                  .isInstanceOf(BindValidationException.class)
++                  .hasMessageContaining("capacity");
++            });
++  }
++
+   private static AppProperties properties(String baseUrl) {
+     return new AppProperties(
+         "key",
+@@ -30,4 +99,8 @@ class AppPropertiesTest {
+         new AppProperties.Request(16_384),
+         new AppProperties.Security(true));
+   }
++
++  @Configuration(proxyBeanMethods = false)
++  @EnableConfigurationProperties(AppProperties.class)
++  static class PropertiesHolder {}
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/ProblemDetailIT.java b/url-shortener/src/test/java/dev/harshil/shortener/config/ProblemDetailIT.java
+new file mode 100644
+index 0000000..8070d8b
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/ProblemDetailIT.java
+@@ -0,0 +1,121 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import java.util.List;
++import java.util.Map;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.EntityExchangeResult;
++import org.springframework.test.web.servlet.client.RestTestClient;
++import tools.jackson.core.type.TypeReference;
++import tools.jackson.databind.json.JsonMapper;
++
++/**
++ * The three filter-produced error bodies (401 from the entry point, 413 from {@link
++ * RequestSizeFilter}, 429 from {@link RateLimitFilter}) have one identical shape (design 3.4).
++ *
++ * <p>Runs in a dedicated context with a create capacity of one so the 429 is reached with a single
++ * extra request. The 413 request is refused before the limiter runs and the 401 request is a GET,
++ * so neither consumes the only token.
++ */
++@SpringBootTest(
++    webEnvironment = WebEnvironment.RANDOM_PORT,
++    properties = "app.ratelimit.create.capacity=1")
++@AutoConfigureRestTestClient
++@TestProfile
++class ProblemDetailIT {
++
++  private static final List<String> CANONICAL_MEMBERS =
++      List.of("type", "title", "status", "detail", "requestId", "timestamp");
++  private static final int MAX_BODY_BYTES = 16_384;
++  private static final String CREATE_BODY = "{\"url\":\"https://example.com/docs\"}";
++
++  @Autowired private RestTestClient client;
++
++  private final JsonMapper json = JsonMapper.builder().build();
++
++  @Test
++  void unauthorized_body_hasTheCanonicalShape() {
++    EntityExchangeResult<byte[]> result =
++        client
++            .get()
++            .uri("/api/v1/links/abcdefg")
++            .exchange()
++            .expectStatus()
++            .isUnauthorized()
++            .expectBody()
++            .returnResult();
++
++    assertCanonicalShape(result, HttpStatus.UNAUTHORIZED, "/problems/unauthorized");
++  }
++
++  @Test
++  void payloadTooLarge_body_hasTheCanonicalShape() {
++    EntityExchangeResult<byte[]> result =
++        client
++            .post()
++            .uri("/api/v1/links")
++            .header(TestApiKey.HEADER, TestApiKey.VALUE)
++            .contentType(MediaType.APPLICATION_JSON)
++            .body("x".repeat(MAX_BODY_BYTES + 1))
++            .exchange()
++            .expectStatus()
++            .isEqualTo(HttpStatus.CONTENT_TOO_LARGE)
++            .expectBody()
++            .returnResult();
++
++    assertCanonicalShape(result, HttpStatus.CONTENT_TOO_LARGE, "/problems/payload-too-large");
++  }
++
++  @Test
++  void rateLimited_body_hasTheCanonicalShape() {
++    create()
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS.value()));
++
++    EntityExchangeResult<byte[]> result =
++        create().expectStatus().isEqualTo(HttpStatus.TOO_MANY_REQUESTS).expectBody().returnResult();
++
++    assertCanonicalShape(result, HttpStatus.TOO_MANY_REQUESTS, "/problems/rate-limited");
++  }
++
++  private RestTestClient.ResponseSpec create() {
++    return client
++        .post()
++        .uri("/api/v1/links")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(CREATE_BODY)
++        .exchange();
++  }
++
++  private void assertCanonicalShape(
++      EntityExchangeResult<byte[]> result, HttpStatus status, String type) {
++    assertThat(result.getResponseHeaders().getContentType())
++        .isNotNull()
++        .satisfies(
++            contentType ->
++                assertThat(contentType.isCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
++                    .isTrue());
++    Map<String, Object> body =
++        json.readValue(result.getResponseBody(), new TypeReference<Map<String, Object>>() {});
++
++    assertThat(body.keySet()).containsExactlyElementsOf(CANONICAL_MEMBERS);
++    assertThat(body)
++        .containsEntry("type", type)
++        .containsEntry("status", status.value())
++        .containsEntry("requestId", result.getResponseHeaders().getFirst(RequestIdFilter.HEADER));
++    assertThat(body.get("title")).asString().isNotBlank();
++    assertThat(body.get("detail")).asString().isNotBlank();
++    assertThat(Instant.parse(body.get("timestamp").toString())).isBeforeOrEqualTo(Instant.now());
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/ProdStartupIT.java b/url-shortener/src/test/java/dev/harshil/shortener/config/ProdStartupIT.java
+new file mode 100644
+index 0000000..172c254
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/ProdStartupIT.java
+@@ -0,0 +1,42 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.UrlShortenerApplication;
++import org.junit.jupiter.api.Test;
++import org.springframework.boot.WebApplicationType;
++import org.springframework.boot.builder.SpringApplicationBuilder;
++import org.springframework.boot.context.properties.bind.validation.BindValidationException;
++
++/**
++ * ADR 0007 fail-fast: the prod profile refuses to start without {@code APP_API_KEY}.
++ *
++ * <p>Uses a real {@code SpringApplication} with the prod property file so the check covers the
++ * {@code app.api-key=${APP_API_KEY:}} wiring, not just the annotation. The servlet web type is kept
++ * because filter registrations, which bind {@code AppProperties}, are created while the embedded
++ * server starts, before any other singleton; the failure therefore surfaces in a fraction of a
++ * second and never touches the database.
++ */
++class ProdStartupIT {
++
++  @Test
++  void prodProfile_withoutApiKey_failsStartupWithBindValidationErrorOnApiKey() {
++    SpringApplicationBuilder prod =
++        new SpringApplicationBuilder(UrlShortenerApplication.class)
++            .web(WebApplicationType.SERVLET)
++            .profiles("prod");
++
++    assertThatThrownBy(
++            () ->
++                prod.run(
++                        "--server.port=0",
++                        "--spring.datasource.url=jdbc:h2:mem:prodcheck;MODE=PostgreSQL",
++                        // Command-line arguments outrank the OS environment, so the test does not
++                        // depend on whether this machine happens to export APP_API_KEY.
++                        "--APP_API_KEY=")
++                    .close())
++        .rootCause()
++        .isInstanceOf(BindValidationException.class)
++        .hasMessageContaining("apiKey");
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitFilterTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitFilterTest.java
+new file mode 100644
+index 0000000..2f956cf
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitFilterTest.java
+@@ -0,0 +1,189 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.api.ProblemWriter;
++import io.github.bucket4j.TimeMeter;
++import java.time.Duration;
++import org.junit.jupiter.api.Test;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.mock.web.MockFilterChain;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.mock.web.MockHttpServletResponse;
++import tools.jackson.databind.json.JsonMapper;
++
++class RateLimitFilterTest {
++
++  private static final int CAPACITY = 2;
++  private static final Duration PERIOD = Duration.ofMinutes(1);
++  private static final String CLIENT_A = "10.0.0.1";
++  private static final String CLIENT_B = "10.0.0.2";
++
++  private final FakeTimeMeter clock = new FakeTimeMeter();
++  private final ProblemWriter problemWriter = new ProblemWriter(JsonMapper.builder().build());
++  private final RateLimitFilter filter =
++      new RateLimitFilter(
++          new AppProperties.RateLimit.Create(CAPACITY, PERIOD), problemWriter, clock);
++
++  @Test
++  void doFilter_withinCapacity_continuesAndReportsRemainingTokens() throws Exception {
++    MockHttpServletResponse first = create(CLIENT_A);
++    MockHttpServletResponse second = create(CLIENT_A);
++
++    assertThat(first.getStatus()).isEqualTo(200);
++    assertThat(first.getHeader(RateLimitFilter.LIMIT_HEADER)).isEqualTo("2");
++    assertThat(first.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("1");
++    assertThat(second.getStatus()).isEqualTo(200);
++    assertThat(second.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("0");
++  }
++
++  @Test
++  void doFilter_capacityExhausted_returns429ProblemWithRetryAfterAndReset() throws Exception {
++    create(CLIENT_A);
++    create(CLIENT_A);
++    MockFilterChain chain = new MockFilterChain();
++
++    MockHttpServletResponse rejected = create(CLIENT_A, chain);
++
++    assertThat(chain.getRequest()).isNull();
++    assertThat(rejected.getStatus()).isEqualTo(429);
++    assertThat(rejected.getContentType()).startsWith(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
++    // Greedy refill of 2 tokens per 60 s: one token every 30 s, a full bucket after 60 s.
++    assertThat(rejected.getHeader(HttpHeaders.RETRY_AFTER)).isEqualTo("30");
++    assertThat(rejected.getHeader(RateLimitFilter.RESET_HEADER)).isEqualTo("60");
++    assertThat(rejected.getHeader(RateLimitFilter.LIMIT_HEADER)).isEqualTo("2");
++    assertThat(rejected.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("0");
++    assertThat(rejected.getContentAsString())
++        .contains("\"type\":\"/problems/rate-limited\"")
++        .contains("\"title\":\"Too many requests\"")
++        .contains("\"status\":429")
++        .contains("retry after 30 seconds");
++  }
++
++  @Test
++  void doFilter_afterOneRefillInterval_acceptsExactlyOneMoreRequest() throws Exception {
++    create(CLIENT_A);
++    create(CLIENT_A);
++    clock.advance(Duration.ofSeconds(30));
++
++    MockHttpServletResponse refilled = create(CLIENT_A);
++    MockHttpServletResponse rejected = create(CLIENT_A);
++
++    assertThat(refilled.getStatus()).isEqualTo(200);
++    assertThat(refilled.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("0");
++    assertThat(rejected.getStatus()).isEqualTo(429);
++  }
++
++  @Test
++  void doFilter_distinctClientAddresses_haveIndependentBuckets() throws Exception {
++    create(CLIENT_A);
++    create(CLIENT_A);
++
++    MockHttpServletResponse otherClient = create(CLIENT_B);
++
++    assertThat(otherClient.getStatus()).isEqualTo(200);
++    assertThat(otherClient.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("1");
++  }
++
++  @Test
++  void doFilter_subSecondRefill_roundsRetryAfterUpToOneSecond() throws Exception {
++    RateLimitFilter fastFilter =
++        new RateLimitFilter(
++            new AppProperties.RateLimit.Create(CAPACITY, Duration.ofSeconds(1)),
++            problemWriter,
++            clock);
++    fastFilter.doFilter(
++        createRequest(CLIENT_A), new MockHttpServletResponse(), new MockFilterChain());
++    fastFilter.doFilter(
++        createRequest(CLIENT_A), new MockHttpServletResponse(), new MockFilterChain());
++    MockHttpServletResponse rejected = new MockHttpServletResponse();
++
++    fastFilter.doFilter(createRequest(CLIENT_A), rejected, new MockFilterChain());
++
++    assertThat(rejected.getStatus()).isEqualTo(429);
++    assertThat(rejected.getHeader(HttpHeaders.RETRY_AFTER)).isEqualTo("1");
++    assertThat(rejected.getHeader(RateLimitFilter.RESET_HEADER)).isEqualTo("1");
++  }
++
++  @Test
++  void doFilter_getOnTheCreatePath_isNotRateLimited() throws Exception {
++    MockHttpServletRequest get = new MockHttpServletRequest("GET", "/api/v1/links");
++    get.setRemoteAddr(CLIENT_A);
++    MockHttpServletResponse response = new MockHttpServletResponse();
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(get, response, chain);
++
++    assertThat(chain.getRequest()).isSameAs(get);
++    assertThat(response.getHeader(RateLimitFilter.LIMIT_HEADER)).isNull();
++  }
++
++  @Test
++  void doFilter_postOnAnotherApiPath_isNotRateLimited() throws Exception {
++    MockHttpServletRequest post = new MockHttpServletRequest("POST", "/api/v1/links/abcdefg");
++    post.setRemoteAddr(CLIENT_A);
++    MockHttpServletResponse response = new MockHttpServletResponse();
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(post, response, chain);
++
++    assertThat(chain.getRequest()).isSameAs(post);
++    assertThat(response.getHeader(RateLimitFilter.LIMIT_HEADER)).isNull();
++  }
++
++  @Test
++  void publicConstructor_readsCapacityFromAppProperties() throws Exception {
++    AppProperties properties =
++        new AppProperties(
++            "key",
++            null,
++            new AppProperties.RateLimit(new AppProperties.RateLimit.Create(7, PERIOD)),
++            new AppProperties.Request(16_384),
++            new AppProperties.Security(true));
++    RateLimitFilter configured = new RateLimitFilter(properties, problemWriter);
++    MockHttpServletResponse response = new MockHttpServletResponse();
++
++    configured.doFilter(createRequest(CLIENT_A), response, new MockFilterChain());
++
++    assertThat(response.getHeader(RateLimitFilter.LIMIT_HEADER)).isEqualTo("7");
++    assertThat(response.getHeader(RateLimitFilter.REMAINING_HEADER)).isEqualTo("6");
++  }
++
++  private MockHttpServletResponse create(String clientAddress) throws Exception {
++    return create(clientAddress, new MockFilterChain());
++  }
++
++  private MockHttpServletResponse create(String clientAddress, MockFilterChain chain)
++      throws Exception {
++    MockHttpServletResponse response = new MockHttpServletResponse();
++    filter.doFilter(createRequest(clientAddress), response, chain);
++    return response;
++  }
++
++  private static MockHttpServletRequest createRequest(String clientAddress) {
++    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/links");
++    request.setRemoteAddr(clientAddress);
++    return request;
++  }
++
++  /** A clock the test moves by hand so refill arithmetic is exact. */
++  private static final class FakeTimeMeter implements TimeMeter {
++
++    private long nanos;
++
++    void advance(Duration duration) {
++      nanos += duration.toNanos();
++    }
++
++    @Override
++    public long currentTimeNanos() {
++      return nanos;
++    }
++
++    @Override
++    public boolean isWallClockBased() {
++      return false;
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitIT.java b/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitIT.java
+new file mode 100644
+index 0000000..7c76927
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitIT.java
+@@ -0,0 +1,132 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import org.junit.jupiter.api.MethodOrderer;
++import org.junit.jupiter.api.Order;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.TestMethodOrder;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++import org.springframework.test.web.servlet.client.RestTestClient.ResponseSpec;
++
++/**
++ * The create rate limit over HTTP (FR-11, NFR-05) in a dedicated context with a capacity of three.
++ *
++ * <p>Every test request arrives from the loopback address, so all of them share one bucket. The
++ * bucket is therefore consumed by exactly one test, and the tests are ordered so the checks that
++ * must run against an empty bucket come after it. Allowed requests assert "not 429" rather than 201
++ * because controllers are not part of this slice of the work.
++ */
++@SpringBootTest(
++    webEnvironment = WebEnvironment.RANDOM_PORT,
++    properties = "app.ratelimit.create.capacity=3")
++@AutoConfigureRestTestClient
++@TestProfile
++@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
++class RateLimitIT {
++
++  private static final String CREATE_BODY = "{\"url\":\"https://example.com/docs\"}";
++
++  @Autowired private RestTestClient client;
++
++  @Test
++  @Order(1)
++  void create_fourthRequestInPeriod_returns429ProblemAndThrottlesBeforeAuthentication() {
++    expectAllowed(createWithKey(), "2");
++    expectAllowed(createWithKey(), "1");
++    expectAllowed(createWithKey(), "0");
++
++    createWithKey()
++        .expectStatus()
++        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS)
++        .expectHeader()
++        .valueMatches(HttpHeaders.RETRY_AFTER, "[1-9][0-9]*")
++        .expectHeader()
++        .valueMatches(RateLimitFilter.RESET_HEADER, "[1-9][0-9]*")
++        .expectHeader()
++        .valueEquals(RateLimitFilter.LIMIT_HEADER, "3")
++        .expectHeader()
++        .valueEquals(RateLimitFilter.REMAINING_HEADER, "0")
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/rate-limited")
++        .jsonPath("$.title")
++        .isEqualTo("Too many requests")
++        .jsonPath("$.status")
++        .isEqualTo(429);
++
++    // The limiter sits before the security chain: an unauthenticated flood is throttled, not
++    // answered with 401, so key guessing cannot bypass it.
++    createWithoutKey().expectStatus().isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
++  }
++
++  @Test
++  @Order(2)
++  void get_afterTheCreateBucketIsEmpty_isNeverRateLimited() {
++    client
++        .get()
++        .uri("/api/v1/links/abcdefg")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS.value()))
++        .expectHeader()
++        .doesNotExist(RateLimitFilter.LIMIT_HEADER);
++  }
++
++  @Test
++  @Order(3)
++  void post_toAnotherApiPath_afterTheCreateBucketIsEmpty_isNotRateLimited() {
++    client
++        .post()
++        .uri("/api/v1/links/abcdefg")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(CREATE_BODY)
++        .exchange()
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS.value()))
++        .expectHeader()
++        .doesNotExist(RateLimitFilter.LIMIT_HEADER);
++  }
++
++  private ResponseSpec createWithKey() {
++    return client
++        .post()
++        .uri("/api/v1/links")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(CREATE_BODY)
++        .exchange();
++  }
++
++  private ResponseSpec createWithoutKey() {
++    return client
++        .post()
++        .uri("/api/v1/links")
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(CREATE_BODY)
++        .exchange();
++  }
++
++  private static void expectAllowed(ResponseSpec response, String expectedRemaining) {
++    response
++        .expectStatus()
++        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS.value()))
++        .expectHeader()
++        .valueEquals(RateLimitFilter.LIMIT_HEADER, "3")
++        .expectHeader()
++        .valueEquals(RateLimitFilter.REMAINING_HEADER, expectedRemaining);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/RequestIdFilterTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/RequestIdFilterTest.java
+new file mode 100644
+index 0000000..6477267
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/RequestIdFilterTest.java
+@@ -0,0 +1,116 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.api.ProblemDetails;
++import jakarta.servlet.ServletException;
++import java.util.concurrent.atomic.AtomicReference;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.MethodSource;
++import org.slf4j.MDC;
++import org.springframework.mock.web.MockFilterChain;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.mock.web.MockHttpServletResponse;
++
++class RequestIdFilterTest {
++
++  private static final String UUID_PATTERN =
++      "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
++
++  private final RequestIdFilter filter = new RequestIdFilter();
++
++  @AfterEach
++  void clearMdc() {
++    MDC.clear();
++  }
++
++  static Stream<String> wellFormedIds() {
++    return Stream.of("1", "client-ID-0042", "a".repeat(64));
++  }
++
++  static Stream<String> malformedIds() {
++    return Stream.of(
++        "", "has space", "with_underscore", "with/slash", "crlf\r\nX-Injected: 1", "a".repeat(65));
++  }
++
++  @ParameterizedTest
++  @MethodSource("wellFormedIds")
++  void doFilter_wellFormedClientId_isEchoedOnTheResponse(String clientId) throws Exception {
++    MockHttpServletRequest request = request(clientId);
++    MockHttpServletResponse response = new MockHttpServletResponse();
++
++    filter.doFilter(request, response, new MockFilterChain());
++
++    assertThat(response.getHeader(RequestIdFilter.HEADER)).isEqualTo(clientId);
++  }
++
++  @ParameterizedTest
++  @MethodSource("malformedIds")
++  void doFilter_malformedClientId_isReplacedByGeneratedUuid(String clientId) throws Exception {
++    MockHttpServletRequest request = request(clientId);
++    MockHttpServletResponse response = new MockHttpServletResponse();
++
++    filter.doFilter(request, response, new MockFilterChain());
++
++    assertThat(response.getHeader(RequestIdFilter.HEADER))
++        .isNotEqualTo(clientId)
++        .matches(UUID_PATTERN);
++  }
++
++  @Test
++  void doFilter_noClientId_generatesUuid() throws Exception {
++    MockHttpServletResponse response = new MockHttpServletResponse();
++
++    filter.doFilter(new MockHttpServletRequest("GET", "/abcdefg"), response, new MockFilterChain());
++
++    assertThat(response.getHeader(RequestIdFilter.HEADER)).matches(UUID_PATTERN);
++  }
++
++  @Test
++  void doFilter_duringTheChain_exposesTheIdInMdcUnderTheProblemDetailsKey() throws Exception {
++    AtomicReference<String> seenByChain = new AtomicReference<>();
++
++    filter.doFilter(
++        request("trace-7"),
++        new MockHttpServletResponse(),
++        (req, res) -> seenByChain.set(MDC.get(ProblemDetails.REQUEST_ID)));
++
++    assertThat(seenByChain).hasValue("trace-7");
++  }
++
++  @Test
++  void doFilter_afterTheChain_removesTheIdFromMdc() throws Exception {
++    filter.doFilter(request("trace-8"), new MockHttpServletResponse(), new MockFilterChain());
++
++    assertThat(MDC.get(ProblemDetails.REQUEST_ID)).isNull();
++  }
++
++  @Test
++  void doFilter_whenTheChainThrows_stillRemovesTheIdFromMdc() {
++    MockHttpServletRequest request = request("trace-9");
++    MockHttpServletResponse response = new MockHttpServletResponse();
++
++    assertThatThrownBy(
++            () ->
++                filter.doFilter(
++                    request,
++                    response,
++                    (req, res) -> {
++                      throw new ServletException("downstream failure");
++                    }))
++        .isInstanceOf(ServletException.class);
++
++    assertThat(MDC.get(ProblemDetails.REQUEST_ID)).isNull();
++    assertThat(response.getHeader(RequestIdFilter.HEADER)).isEqualTo("trace-9");
++  }
++
++  private static MockHttpServletRequest request(String clientId) {
++    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/abcdefg");
++    request.addHeader(RequestIdFilter.HEADER, clientId);
++    return request;
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/RequestSizeFilterTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/RequestSizeFilterTest.java
+new file mode 100644
+index 0000000..929d421
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/RequestSizeFilterTest.java
+@@ -0,0 +1,213 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.api.ProblemWriter;
++import jakarta.servlet.ServletInputStream;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.servlet.http.HttpServletRequestWrapper;
++import java.io.BufferedReader;
++import java.nio.charset.StandardCharsets;
++import java.time.Duration;
++import java.util.concurrent.atomic.AtomicReference;
++import org.junit.jupiter.api.Test;
++import org.springframework.http.MediaType;
++import org.springframework.mock.web.MockFilterChain;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.mock.web.MockHttpServletResponse;
++import tools.jackson.databind.json.JsonMapper;
++
++class RequestSizeFilterTest {
++
++  private static final int MAX_BYTES = 64;
++  private static final byte[] SMALL_JSON =
++      "{\"url\":\"https://example.com/a\"}".getBytes(StandardCharsets.UTF_8);
++
++  private final RequestSizeFilter filter =
++      new RequestSizeFilter(properties(MAX_BYTES), new ProblemWriter(JsonMapper.builder().build()));
++
++  @Test
++  void doFilter_declaredLengthOverLimit_returns413WithoutReadingTheBody() throws Exception {
++    HttpServletRequest request = unreadable(apiPost(new byte[MAX_BYTES + 1]));
++    MockHttpServletResponse response = new MockHttpServletResponse();
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(request, response, chain);
++
++    assertThat(chain.getRequest()).isNull();
++    assertThat(response.getStatus()).isEqualTo(413);
++    assertThat(response.getContentType()).startsWith(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
++    assertThat(response.getContentAsString())
++        .contains("\"type\":\"/problems/payload-too-large\"")
++        .contains("\"title\":\"Request body too large\"")
++        .contains("\"status\":413")
++        .contains("64 bytes");
++  }
++
++  @Test
++  void doFilter_declaredLengthAtLimit_passesTheOriginalRequestThrough() throws Exception {
++    MockHttpServletRequest request = apiPost(new byte[MAX_BYTES]);
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(request, new MockHttpServletResponse(), chain);
++
++    assertThat(chain.getRequest()).isSameAs(request);
++  }
++
++  @Test
++  void doFilter_unknownLengthWithinLimit_replaysTheBodyThroughGetInputStream() throws Exception {
++    AtomicReference<byte[]> seenByChain = new AtomicReference<>();
++
++    filter.doFilter(
++        unknownLength(apiPost(SMALL_JSON)),
++        new MockHttpServletResponse(),
++        (req, res) -> seenByChain.set(req.getInputStream().readAllBytes()));
++
++    assertThat(seenByChain.get()).isEqualTo(SMALL_JSON);
++  }
++
++  @Test
++  void doFilter_unknownLengthWithinLimit_replaysTheBodyThroughGetReaderInRequestCharset()
++      throws Exception {
++    MockHttpServletRequest request =
++        apiPost("{\"url\":\"https://exämple.com\"}".getBytes(StandardCharsets.UTF_8));
++    request.setCharacterEncoding(StandardCharsets.UTF_8.name());
++    AtomicReference<String> seenByChain = new AtomicReference<>();
++
++    filter.doFilter(
++        unknownLength(request),
++        new MockHttpServletResponse(),
++        (req, res) -> seenByChain.set(req.getReader().readLine()));
++
++    assertThat(seenByChain).hasValue("{\"url\":\"https://exämple.com\"}");
++  }
++
++  @Test
++  void doFilter_unknownLengthAtLimit_isAccepted() throws Exception {
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(
++        unknownLength(apiPost(new byte[MAX_BYTES])), new MockHttpServletResponse(), chain);
++
++    assertThat(chain.getRequest()).isNotNull();
++    assertThat(chain.getRequest().getContentLengthLong()).isEqualTo(MAX_BYTES);
++  }
++
++  @Test
++  void doFilter_unknownLengthOverLimit_returns413() throws Exception {
++    MockHttpServletResponse response = new MockHttpServletResponse();
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(unknownLength(apiPost(new byte[MAX_BYTES + 1])), response, chain);
++
++    assertThat(chain.getRequest()).isNull();
++    assertThat(response.getStatus()).isEqualTo(413);
++    assertThat(response.getContentAsString()).contains("\"type\":\"/problems/payload-too-large\"");
++  }
++
++  @Test
++  void doFilter_outsideTheApiPrefix_isNotApplied() throws Exception {
++    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/abcdefg");
++    request.setContent(new byte[MAX_BYTES + 1]);
++    MockFilterChain chain = new MockFilterChain();
++
++    filter.doFilter(request, new MockHttpServletResponse(), chain);
++
++    assertThat(chain.getRequest()).isSameAs(request);
++  }
++
++  @Test
++  void bufferedBodyRequest_getReaderAfterGetInputStream_isRejected() throws Exception {
++    RequestSizeFilter.BufferedBodyRequest request =
++        new RequestSizeFilter.BufferedBodyRequest(apiPost(SMALL_JSON), SMALL_JSON);
++    ServletInputStream first = request.getInputStream();
++    first.readAllBytes();
++
++    // A second stream replays the buffer from the start; the reader stays off limits.
++    assertThat(request.getInputStream().readAllBytes()).isEqualTo(SMALL_JSON);
++    assertThatThrownBy(request::getReader).isInstanceOf(IllegalStateException.class);
++  }
++
++  @Test
++  void bufferedBodyRequest_getInputStreamAfterGetReader_isRejected() throws Exception {
++    RequestSizeFilter.BufferedBodyRequest request =
++        new RequestSizeFilter.BufferedBodyRequest(apiPost(SMALL_JSON), SMALL_JSON);
++    BufferedReader first = request.getReader();
++
++    assertThat(first.readLine()).isEqualTo(new String(SMALL_JSON, StandardCharsets.UTF_8));
++    assertThatThrownBy(request::getInputStream).isInstanceOf(IllegalStateException.class);
++  }
++
++  @Test
++  void bufferedBodyRequest_withoutCharacterEncoding_readsUtf8() throws Exception {
++    byte[] body = "ü".getBytes(StandardCharsets.UTF_8);
++    RequestSizeFilter.BufferedBodyRequest request =
++        new RequestSizeFilter.BufferedBodyRequest(apiPost(body), body);
++
++    assertThat(request.getReader().readLine()).isEqualTo("ü");
++    assertThat(request.getContentLength()).isEqualTo(body.length);
++  }
++
++  @Test
++  void byteArrayServletInputStream_reportsReadinessAndCompletionAndRejectsAsyncReads()
++      throws Exception {
++    RequestSizeFilter.ByteArrayServletInputStream stream =
++        new RequestSizeFilter.ByteArrayServletInputStream(new byte[] {1, 2});
++
++    assertThat(stream.isReady()).isTrue();
++    assertThat(stream.isFinished()).isFalse();
++    assertThat(stream.available()).isEqualTo(2);
++    assertThat(stream.read()).isEqualTo(1);
++    assertThat(stream.read(new byte[4], 0, 4)).isEqualTo(1);
++    assertThat(stream.isFinished()).isTrue();
++    assertThatThrownBy(() -> stream.setReadListener(null))
++        .isInstanceOf(IllegalStateException.class);
++  }
++
++  private static MockHttpServletRequest apiPost(byte[] body) {
++    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/links");
++    request.setContentType(MediaType.APPLICATION_JSON_VALUE);
++    request.setContent(body);
++    return request;
++  }
++
++  /** Simulates a chunked request: the body is there but no length was declared. */
++  private static HttpServletRequest unknownLength(HttpServletRequest request) {
++    return new HttpServletRequestWrapper(request) {
++      @Override
++      public int getContentLength() {
++        return -1;
++      }
++
++      @Override
++      public long getContentLengthLong() {
++        return -1;
++      }
++    };
++  }
++
++  /** Fails the test if anything touches the body. */
++  private static HttpServletRequest unreadable(HttpServletRequest request) {
++    return new HttpServletRequestWrapper(request) {
++      @Override
++      public ServletInputStream getInputStream() {
++        throw new AssertionError("the body must not be read when Content-Length is over the limit");
++      }
++
++      @Override
++      public BufferedReader getReader() {
++        throw new AssertionError("the body must not be read when Content-Length is over the limit");
++      }
++    };
++  }
++
++  private static AppProperties properties(long maxBytes) {
++    return new AppProperties(
++        "key",
++        null,
++        new AppProperties.RateLimit(new AppProperties.RateLimit.Create(20, Duration.ofMinutes(1))),
++        new AppProperties.Request(maxBytes),
++        new AppProperties.Security(true));
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/SecurityHeadersIT.java b/url-shortener/src/test/java/dev/harshil/shortener/config/SecurityHeadersIT.java
+new file mode 100644
+index 0000000..61ecd85
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/SecurityHeadersIT.java
+@@ -0,0 +1,125 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.MethodSource;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * The hardening headers every response must carry (design 3.3, NFR-05), the correlation id contract
++ * of {@link RequestIdFilter}, and the two exceptions: the Swagger-only Content-Security-Policy and
++ * the public OpenAPI document.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class SecurityHeadersIT {
++
++  private static final String SWAGGER_CSP =
++      "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
++          + "frame-ancestors 'none'; object-src 'none'";
++  private static final String UUID_PATTERN =
++      "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
++
++  @Autowired private RestTestClient client;
++
++  static Stream<String> malformedRequestIds() {
++    return Stream.of("has space", "a".repeat(65));
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"/abcdefg", "/api/v1/links/abcdefg"})
++  void anyResponse_carriesHardeningHeadersAndRequestId(String path) {
++    client
++        .get()
++        .uri(path)
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange()
++        .expectHeader()
++        .valueEquals("X-Content-Type-Options", "nosniff")
++        .expectHeader()
++        .valueEquals("X-Frame-Options", "DENY")
++        .expectHeader()
++        .valueEquals("Referrer-Policy", "no-referrer")
++        .expectHeader()
++        .value(HttpHeaders.CACHE_CONTROL, value -> assertThat(value).contains("no-store"))
++        .expectHeader()
++        .valueMatches(RequestIdFilter.HEADER, UUID_PATTERN)
++        .expectHeader()
++        .doesNotExist("Content-Security-Policy");
++  }
++
++  @Test
++  void requestId_wellFormedClientValue_isEchoed() {
++    client
++        .get()
++        .uri("/actuator/health")
++        .header(RequestIdFilter.HEADER, "trace-0001")
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectHeader()
++        .valueEquals(RequestIdFilter.HEADER, "trace-0001");
++  }
++
++  @ParameterizedTest
++  @MethodSource("malformedRequestIds")
++  void requestId_malformedClientValue_isReplaced(String clientValue) {
++    client
++        .get()
++        .uri("/actuator/health")
++        .header(RequestIdFilter.HEADER, clientValue)
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectHeader()
++        .value(
++            RequestIdFilter.HEADER,
++            value -> assertThat(value).isNotEqualTo(clientValue).matches(UUID_PATTERN));
++  }
++
++  @Test
++  void swaggerUi_carriesTheSwaggerOnlyContentSecurityPolicy() {
++    client
++        .get()
++        .uri("/swagger-ui/index.html")
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectHeader()
++        .valueEquals("Content-Security-Policy", SWAGGER_CSP)
++        .expectHeader()
++        .valueEquals("Referrer-Policy", "no-referrer")
++        .expectHeader()
++        .exists(RequestIdFilter.HEADER);
++  }
++
++  @Test
++  void apiDocs_withoutKey_isPublicJson() {
++    client
++        .get()
++        .uri("/v3/api-docs")
++        .exchange()
++        .expectStatus()
++        .isOk()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
++        .expectBody()
++        .jsonPath("$.openapi")
++        .exists()
++        .jsonPath("$.info.title")
++        .isEqualTo("URL Shortener API");
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/support/TestApiKey.java b/url-shortener/src/test/java/dev/harshil/shortener/support/TestApiKey.java
+new file mode 100644
+index 0000000..cade7a3
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/support/TestApiKey.java
+@@ -0,0 +1,13 @@
++package dev.harshil.shortener.support;
++
++/**
++ * The API key configured by the test profile (application-test.properties) and the header it
++ * travels in, shared by every integration test so a key change is a one-line edit.
++ */
++public final class TestApiKey {
++
++  public static final String HEADER = "X-API-Key";
++  public static final String VALUE = "test-api-key";
++
++  private TestApiKey() {}
++}

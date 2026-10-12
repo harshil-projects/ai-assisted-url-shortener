@@ -69,6 +69,9 @@ Instructions for any AI coding assistant working in this repository. The enginee
 | `org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient` with `org.springframework.test.web.servlet.client.RestTestClient` | `TestRestTemplate`, `WebTestClient` for MVC tests |
 | Security lambda DSL, for example `http.authorizeHttpRequests(a -> a.requestMatchers("/api/v1/**").authenticated())` | `and()`, `authorizeRequests()`, `antMatchers()`, `AntPathRequestMatcher` |
 | API key filter constructed inside `SecurityConfig` and added with `addFilterBefore(..., AuthorizationFilter.class)` | Also marking the filter `@Component`; it would run twice |
+| `org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties.DEFAULT_FILTER_ORDER` for filters that must run before the security chain | `SecurityProperties.DEFAULT_FILTER_ORDER`, which no longer exists in Boot 4 |
+| `HttpStatus.CONTENT_TOO_LARGE` for 413 (RFC 9110 name, Spring Framework 7) | `HttpStatus.PAYLOAD_TOO_LARGE` |
+| `spring.autoconfigure.exclude=...UserDetailsServiceAutoConfiguration` so no default user or generated password exists | Leaving Boot's default in-memory user alongside an API-key chain |
 | Click executor bean declared with `defaultCandidate = false` | Displacing Boot's application task executor |
 | `Instant` fields on `TIMESTAMP WITH TIME ZONE` columns with `ddl-auto=validate` | `LocalDateTime`, `TIMESTAMP` without zone |
 | One `ALTER TABLE ... ADD COLUMN` per statement | Multi-column `ALTER`; H2 and PostgreSQL disagree on it |
