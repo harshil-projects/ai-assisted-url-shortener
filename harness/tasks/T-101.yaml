@@ -1,10 +1,10 @@
 id: T-101
 title: Impact analysis for link expiry, engineer-authored, with predicted file list
 requirement: R-02
-activities: [review-prep, document]
+activities: [document]
 impact: normal
 impact_reasons: []
-status: todo
+status: done
 depends_on: [T-010]
 intent: >
   Reason about the existing codebase before changing it: the modules, endpoints, schema, data flows,
