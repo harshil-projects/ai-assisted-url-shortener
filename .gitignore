@@ -35,3 +35,6 @@ Thumbs.db
 # after the blanket rule re-includes them.
 *.log
 !harness/evidence/**/*.log
+
+# Agent worktrees created by the assistant tooling during parallel drafting sessions; never part of the repository
+.claude/worktrees/
