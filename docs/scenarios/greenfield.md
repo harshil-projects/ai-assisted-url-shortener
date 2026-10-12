@@ -81,8 +81,8 @@ had not all been appended yet. See [Still open](#still-open).
 | [T-006](../../harness/tasks/T-006.yaml) | Link metadata, single-query stats, and delete | T-005 | high (data-deletion) | implement | in-progress |
 | [T-007](../../harness/tasks/T-007.yaml) | Spring Security chain, API key filter, headers, rate limiter before the chain, prod fail-fast | T-004 | high (security, dependency) | implement | done |
 | [T-008](../../harness/tasks/T-008.yaml) | OpenAPI customizer, Swagger UI with security scheme, exported spec, drift test, API reference | T-006, T-007 | normal | implement, document | in-progress |
-| [T-009](../../harness/tasks/T-009.yaml) | Integration flow tests, perf smoke, test isolation, README reviewer path, ADRs, greenfield evidence | T-008 | normal | test-gen, document | todo |
-| [T-010](../../harness/tasks/T-010.yaml) | Fresh-context review of the greenfield code with a defect-candidate list | T-009 | normal | review-prep | todo |
+| [T-009](../../harness/tasks/T-009.yaml) | Integration flow tests, perf smoke, test isolation, README reviewer path, ADRs, greenfield evidence | T-008 | normal | test-gen, document | done |
+| [T-010](../../harness/tasks/T-010.yaml) | Fresh-context review of the greenfield code with a defect-candidate list | T-009 | normal | review-prep | done |
 
 The order is dependency order for one engineer. In practice T-002 to T-006 ran as one batched
 generation session from a single prompt, and T-007 with the OpenAPI part of T-008 as a second,

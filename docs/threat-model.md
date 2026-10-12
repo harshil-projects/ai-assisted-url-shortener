@@ -99,4 +99,4 @@ Owner for every item: Harshil.
 | Secrets never enter history | gitleaks in CI with full history; HC-10 in the default build |
 | Security-touching tasks had a second look | Reason code `security` forces a fresh-context review artifact and a sign-off (T-007 and any later change) |
 | Residual risks have an owner | Accepted risks table above |
-| Results | Gate and test outcomes filled at submission from the traceability report |
+| Results | All gates green at v0.1.0: 419 service tests, SpotBugs with FindSecBugs at zero findings, gitleaks clean; see `docs/reports/traceability.md` and the `verify-N.log` files under `harness/evidence/` |

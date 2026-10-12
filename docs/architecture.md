@@ -9,7 +9,7 @@
 
 ## Purpose and scope
 
-This is the architecture overview the assignment brief asks for: components, tools, execution approach, control flow, and key decisions. It describes the system as designed. Where a number depends on the build it says "filled at submission".
+This is the architecture overview the assignment brief asks for: components, tools, execution approach, control flow, and key decisions. It describes the system as built at v0.1.0 on 2026-10-12 and is the maintained current-state description; the dated design record with its change log is `docs/design/2026-10-12-system-design.md`, and the API contract is `docs/reference/api.md` with the committed OpenAPI export. Numbers come from the final gate run and `docs/reports/traceability.md`.
 
 | In scope | Out of scope |
 |---|---|

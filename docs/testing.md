@@ -9,7 +9,7 @@
 
 ## Strategy
 
-Shares are targets by test count. Actual counts are filled at submission.
+Shares were targets by test count; the actual figures at v0.1.0 are in the table at the end of this document.
 
 | Layer | Share by count | Scope | Tooling | Examples |
 |---|---|---|---|---|
@@ -82,11 +82,11 @@ Results at submission:
 
 | Metric | Value |
 |---|---|
-| Test count by layer | filled at submission |
-| Line coverage | filled at submission |
-| Branch coverage | filled at submission |
-| Classes with zero coverage | filled at submission |
-| p99 redirect latency, in-process smoke | filled at submission |
+| Test count by layer | 419 test executions from 270 test methods: 144 unit, 63 slice, 62 integration, 1 opt-in perf (parameterised cases counted once as methods, once per row as executions) |
+| Line coverage | 97.9 percent, 751 of 767 lines (gate: 80) |
+| Branch coverage | 94.0 percent, 220 of 234 branches (gate: 70) |
+| Classes with zero coverage | 0 of 47 analysed classes (gate: 0) |
+| p99 redirect latency, in-process smoke | 119 ms over 2,000 redirects (p50 8 ms, p95 45 ms) on a loaded laptop with other builds running; the 200 ms assertion is a smoke threshold, not a capacity claim |
 
 ## What is not tested and why
 

@@ -187,6 +187,8 @@ Harshil is accountable for every line in this repository. AI output was treated 
 
 ## Documentation index
 
+Each document has one job, and a fact lives in one authoritative place with the others pointing to it: the design document is the dated design record with its change log; `docs/architecture.md` is the maintained as-built description; `docs/reference/api.md` with the committed OpenAPI export is the contract; the scenario documents hold the per-requirement evidence; the harness folders hold the raw data the build checks. This README summarises and links; it does not restate.
+
 | Document | Content |
 |---|---|
 | `docs/design/2026-10-12-system-design.md` | Master design that the documents below are carved from |

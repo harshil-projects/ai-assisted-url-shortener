@@ -171,7 +171,7 @@ Implemented as JUnit tests in `harness-check`; each failure message names the ru
 | HC-11 | A file marked `rejected` has no corresponding note in `rejected_notes` |
 | HC-12 | For a task whose spec names an impact analysis, a changed main-source file is not in the analysis's predicted list; tests and docs are exempt |
 
-The report lists per task: spec, activities, impact, prompt versions, generated, edited, and rejected counts, computed kept ratio, gate results, sign-off, commits. A summary table gives acceptance, edit, and rejection ratios across the project, labelled with which numbers are computed and which are asserted. Ratios are filled at submission.
+The report lists per task: spec, activities, impact, prompt versions, generated, edited, and rejected counts, computed kept ratio, gate results, sign-off, commits. A summary table gives acceptance, edit, and rejection ratios across the project, labelled with which numbers are computed and which are asserted. At v0.1.0 the report shows 255 files kept as generated, 22 edited and 0 rejected (acceptance 0.92, edit 0.08, both from engineer-asserted statuses) and a computed mean kept ratio of 0.81.
 
 ## Scripts
 

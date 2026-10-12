@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | v2, revised after three independent design reviews, awaiting engineer approval |
+| Status | v2, approved and executed on 2026-10-12, delivered as v0.1.0. This is the dated design record; changes made after approval are listed in section 13, and the as-built description is `docs/architecture.md` |
 | Date | 2026-10-12 |
 | Owner | Harshil, the engineer accountable for every line shipped |
 | Scope | The assignment brief for an AI-assisted software engineering role: a URL shortener delivered through engineer-led, AI-accelerated, auditable execution |
-| Timebox | Evening of 2026-10-12 through 2026-10-15 |
+| Timebox | Planned 2026-10-12 to 2026-10-15; executed in one day on 2026-10-12 with the descoping ladder of section 7 unused |
 | Reviewer environment assumed | Locked-down Windows laptop, JDK 21, no Docker, no admin rights, no API keys, possibly a corporate proxy, about one hour of attention |
 
 This is the master design. During the build it is carved into the deliverable documents listed in section 2.5. Every artifact version was verified on Maven Central or the vendor's release page on 2026-10-12. Changes from v1 are summarised in section 13.
@@ -198,12 +198,7 @@ flowchart LR
 
 Read to write traffic is around 10 to 1, so the read path is the service to cache and replicate first; it shares nothing with the write path except the store.
 
-| Logical service | Endpoints | Main classes | Protection | Notes |
-|---|---|---|---|---|
-| Write path | `POST /api/v1/links` | `LinkController`, `LinkService`, `LinkAllocator`, `CodeGenerator`, `UrlValidator` | API key; rate limit before authentication; 16 KiB body cap | Random 7-character Base62 code or a client-supplied `customAlias`; one transaction per allocation attempt; 409 on a taken alias; optional `expiresAt` (brownfield) |
-| Read path (hot) | `GET /{code}`, `HEAD /{code}` | `RedirectController`, `LinkService.resolve`, `ClickRecorder` on `clickRecorderExecutor` | Public; the path regex keeps noise such as `/favicon.ico` away from the database | One indexed lookup; 302 with `no-store`, 410 once expired; the click, with its attribution (ambiguous scenario), is published as an immutable event and persisted asynchronously; `HEAD` resolves without counting |
-| Management and analytics | `GET /api/v1/links/{code}`, `DELETE /api/v1/links/{code}`, `GET /api/v1/links/{code}/stats` | `LinkController`, `StatsController`, `AnalyticsService`, `ClickEventRepository` | API key | Metadata with the expiry state; hard delete with cascading click removal; one aggregate query for the totals plus the two top-ten attribution breakdowns |
-| Platform | `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`, `/v3/api-docs`, `/v3/api-docs.yaml`, `/swagger-ui.html` | Spring Boot Actuator, springdoc, `OpenApiConfig`, `OpenApiErrorCustomizer` | Health public; the other actuator endpoints behind the key in prod and open in dev; API docs public under their own Content-Security-Policy | Build info, custom counters, committed OpenAPI export drift-tested on every build |
+The maintained table of endpoints, classes and protection per service is in `docs/architecture.md` under "Logical services and their APIs"; the README carries the reviewer-facing summary. This document keeps the diagram only, so one table is authoritative.
 
 ### 2.2 Tools
 
