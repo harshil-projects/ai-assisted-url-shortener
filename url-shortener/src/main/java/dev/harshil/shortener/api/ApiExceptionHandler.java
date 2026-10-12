@@ -2,20 +2,20 @@ package dev.harshil.shortener.api;
 
 import dev.harshil.shortener.domain.AliasTakenException;
 import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
+import dev.harshil.shortener.domain.LinkExpiredException;
 import dev.harshil.shortener.domain.LinkNotFoundException;
 import dev.harshil.shortener.domain.LogSanitizer;
 import dev.harshil.shortener.domain.UrlValidationException;
 import dev.harshil.shortener.domain.UrlValidationException.FieldError;
-import java.net.URI;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -24,7 +24,6 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
-import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -42,15 +41,20 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  * requestId} and {@code timestamp}, is identical to the one the filters write through {@code
  * ProblemWriter}. Details are fixed sentences chosen here: a parser or driver message never reaches
  * a client, and the full exception is logged server-side with the request id instead.
+ *
+ * <p>This class is the mapping table only. Building the response, the shared validation and
+ * unknown-path bodies, and the standardisation of framework-built bodies live in {@link
+ * ProblemResponses} (refactor T-104), so a new problem type adds one mapping method here and
+ * nothing else.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
-  static final String ERRORS = "errors";
-  static final String VALIDATION_TITLE = "Request validation failed";
-  static final String VALIDATION_DETAIL = "One or more fields are invalid";
+  static final String ERRORS = ProblemResponses.ERRORS;
+  static final String VALIDATION_TITLE = ProblemResponses.VALIDATION_TITLE;
+  static final String VALIDATION_DETAIL = ProblemResponses.VALIDATION_DETAIL;
   static final String UNREADABLE = "Request body is missing or is not valid JSON";
-  static final String NO_RESOURCE = "No resource at this path";
+  static final String NO_RESOURCE = ProblemResponses.NO_RESOURCE;
   static final String UNEXPECTED = "Unexpected error";
   static final String RETRY_AFTER_SECONDS = "5";
 
@@ -64,7 +68,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
    */
   @ExceptionHandler(UrlValidationException.class)
   public ResponseEntity<ProblemDetail> handleUrlValidation(UrlValidationException ex) {
-    return respond(validationFailed(ex.getErrors()));
+    return ProblemResponses.respond(ProblemResponses.validationFailed(ex.getErrors()));
   }
 
   /**
@@ -75,9 +79,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
    */
   @ExceptionHandler(LinkNotFoundException.class)
   public ResponseEntity<ProblemDetail> handleLinkNotFound(LinkNotFoundException ex) {
-    return respond(
+    return ProblemResponses.respond(
         ProblemDetails.of(
             HttpStatus.NOT_FOUND, ProblemTypes.LINK_NOT_FOUND, "Link not found", ex.getMessage()));
+  }
+
+  /**
+   * Expired link on the redirect path: 410 with {@code Cache-Control: no-store}, so no intermediary
+   * keeps a cached answer for a link that has stopped redirecting (design 3.6).
+   *
+   * @param ex the expiry
+   * @return the problem response
+   */
+  @ExceptionHandler(LinkExpiredException.class)
+  public ResponseEntity<ProblemDetail> handleLinkExpired(LinkExpiredException ex) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setCacheControl(CacheControl.noStore());
+    return ProblemResponses.respond(
+        ProblemDetails.of(
+            HttpStatus.GONE, ProblemTypes.LINK_EXPIRED, "Link has expired", ex.getMessage()),
+        headers);
   }
 
   /**
@@ -88,7 +109,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
    */
   @ExceptionHandler(AliasTakenException.class)
   public ResponseEntity<ProblemDetail> handleAliasTaken(AliasTakenException ex) {
-    return respond(
+    return ProblemResponses.respond(
         ProblemDetails.of(
             HttpStatus.CONFLICT,
             ProblemTypes.ALIAS_TAKEN,
@@ -107,7 +128,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
       CodeGenerationExhaustedException ex) {
     log.error(
         "Code generation exhausted after {} attempts; requestId={}", ex.getAttempts(), requestId());
-    return respond(
+    return ProblemResponses.respond(
         ProblemDetails.of(
             HttpStatus.INTERNAL_SERVER_ERROR,
             ProblemTypes.CODE_GENERATION_EXHAUSTED,
@@ -129,7 +150,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     log.error("Database unavailable; requestId={}", requestId(), ex);
     HttpHeaders headers = new HttpHeaders();
     headers.set(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
-    return respond(
+    return ProblemResponses.respond(
         ProblemDetails.of(
             HttpStatus.SERVICE_UNAVAILABLE,
             ProblemTypes.SERVICE_UNAVAILABLE,
@@ -148,7 +169,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ProblemDetail> handleUnexpected(Exception ex) {
     log.error("Unhandled exception; requestId={}", requestId(), ex);
-    return respond(
+    return ProblemResponses.respond(
         ProblemDetails.of(
             HttpStatus.INTERNAL_SERVER_ERROR,
             ProblemTypes.ABOUT_BLANK,
@@ -167,7 +188,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             .sorted(Comparator.comparing(error -> error.getField()))
             .map(error -> new FieldError(error.getField(), messageOf(error.getDefaultMessage())))
             .toList();
-    return handleExceptionInternal(ex, validationFailed(errors), headers, status, request);
+    return handleExceptionInternal(
+        ex, ProblemResponses.validationFailed(errors), headers, status, request);
   }
 
   @Override
@@ -215,13 +237,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
   @Override
   protected ResponseEntity<Object> handleNoResourceFoundException(
       NoResourceFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-    return handleExceptionInternal(ex, noResource(status), headers, status, request);
+    return handleExceptionInternal(
+        ex, ProblemResponses.noResource(status), headers, status, request);
   }
 
   @Override
   protected ResponseEntity<Object> handleNoHandlerFoundException(
       NoHandlerFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-    return handleExceptionInternal(ex, noResource(status), headers, status, request);
+    return handleExceptionInternal(
+        ex, ProblemResponses.noResource(status), headers, status, request);
   }
 
   /**
@@ -238,65 +262,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
       HttpStatusCode status,
       WebRequest request) {
     ProblemDetail problem =
-        body instanceof ProblemDetail detail ? detail : frameworkBody(ex, status);
+        body instanceof ProblemDetail detail ? detail : ProblemResponses.frameworkBody(ex, status);
     HttpHeaders problemHeaders = HttpHeaders.copyOf(headers);
     problemHeaders.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
     return super.handleExceptionInternal(
-        ex, standardised(problem, status), problemHeaders, status, request);
-  }
-
-  private static ProblemDetail frameworkBody(Exception ex, HttpStatusCode status) {
-    return ex instanceof ErrorResponse response
-        ? response.getBody()
-        : ProblemDetail.forStatus(status);
-  }
-
-  /** Returns the body unchanged when it already has both members, otherwise a rebuilt copy. */
-  private static ProblemDetail standardised(ProblemDetail problem, HttpStatusCode status) {
-    Map<String, Object> properties = problem.getProperties();
-    if (properties != null
-        && properties.containsKey(ProblemDetails.REQUEST_ID)
-        && properties.containsKey(ProblemDetails.TIMESTAMP)) {
-      return problem;
-    }
-    URI type = problem.getType() == null ? ProblemTypes.ABOUT_BLANK : problem.getType();
-    ProblemDetail standard =
-        ProblemDetails.of(status, type, problem.getTitle(), problem.getDetail());
-    standard.setInstance(problem.getInstance());
-    if (properties != null) {
-      properties.forEach(standard::setProperty);
-    }
-    return standard;
-  }
-
-  private static ProblemDetail noResource(HttpStatusCode status) {
-    return ProblemDetails.of(status, ProblemTypes.LINK_NOT_FOUND, "Link not found", NO_RESOURCE);
-  }
-
-  private static ProblemDetail validationFailed(List<FieldError> errors) {
-    ProblemDetail problem =
-        ProblemDetails.of(
-            HttpStatus.BAD_REQUEST,
-            ProblemTypes.VALIDATION_FAILED,
-            VALIDATION_TITLE,
-            VALIDATION_DETAIL);
-    problem.setProperty(ERRORS, errors);
-    return problem;
+        ex, ProblemResponses.standardised(problem, status), problemHeaders, status, request);
   }
 
   private static String messageOf(@Nullable String defaultMessage) {
     return defaultMessage == null ? "is invalid" : defaultMessage;
-  }
-
-  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem) {
-    return respond(problem, new HttpHeaders());
-  }
-
-  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem, HttpHeaders headers) {
-    return ResponseEntity.status(problem.getStatus())
-        .headers(headers)
-        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
-        .body(problem);
   }
 
   private static String requestId() {
