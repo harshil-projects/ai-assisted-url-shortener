@@ -168,6 +168,17 @@ flowchart TB
 | `harness-check` | JUnit tests that read `harness/`, the source tree, and git history when available; failures are violations; writes the traceability report to `target/` | SnakeYAML (Boot-managed) |
 | `docs/` | Deliverable documents and the committed report snapshot | generated report |
 
+Logical services:
+
+The service is one deployable, but its endpoints form four logical services with different traffic shapes and protection. The code is organised along the same lines (section 3.2) and the companion diagram page shows the same split.
+
+| Logical service | Endpoints | Main classes | Protection | Notes |
+|---|---|---|---|---|
+| Write path | `POST /api/v1/links` | `LinkController`, `LinkService`, `LinkAllocator`, `CodeGenerator`, `UrlValidator` | API key; rate limit before authentication; 16 KiB body cap | Random 7-character Base62 code or a client-supplied `customAlias`; one transaction per allocation attempt; 409 on a taken alias; optional `expiresAt` (brownfield) |
+| Read path (hot) | `GET /{code}`, `HEAD /{code}` | `RedirectController`, `LinkService.resolve`, `ClickRecorder` on `clickRecorderExecutor` | Public; the path regex keeps noise such as `/favicon.ico` away from the database | One indexed lookup; 302 with `no-store`, 410 once expired; the click, with its attribution (ambiguous scenario), is published as an immutable event and persisted asynchronously; `HEAD` resolves without counting |
+| Management and analytics | `GET /api/v1/links/{code}`, `DELETE /api/v1/links/{code}`, `GET /api/v1/links/{code}/stats` | `LinkController`, `StatsController`, `AnalyticsService`, `ClickEventRepository` | API key | Metadata with the expiry state; hard delete with cascading click removal; one aggregate query for the totals plus the two top-ten attribution breakdowns |
+| Platform | `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`, `/v3/api-docs`, `/v3/api-docs.yaml`, `/swagger-ui.html` | Spring Boot Actuator, springdoc, `OpenApiConfig`, `OpenApiErrorCustomizer` | Health public; the other actuator endpoints behind the key in prod and open in dev; API docs public under their own Content-Security-Policy | Build info, custom counters, committed OpenAPI export drift-tested on every build |
+
 ### 2.2 Tools
 
 | Purpose | Tool | Version | Why this one |
@@ -962,4 +973,5 @@ Full URLs for every reference are retained in the research digests and carried i
 | Cuts: Error Prone, Gatling, OWASP dependency-check, enforcer convergence, JSpecify, idempotency key, redirect rate limit, IETF draft headers, JSON Schema files, per-edit format hook, ECS logging test | Feasibility and technical reviews |
 | Plan re-sequenced to eighteen tasks with a descoping ladder; toolchain proof and README rewrite moved to tonight; minimal harness-check before the first task commit | Feasibility and brief-fit reviews |
 | Firm name and brief quotations removed from the repository | Brief-fit review |
+| Logical services table (write path, read path, management and analytics, platform) added to section 2.1; previously only in the companion diagram page and the README | Engineer's review during handover, 2026-10-12 |
 | ADR 0003 now records the Redis counter design from the common interview treatment as a considered alternative with the switch condition | Engineer's comparison request |
