@@ -29,7 +29,30 @@ Likelihood and impact are H, M, or L. Response is one of Mitigate, Eliminate, Ac
 | RK-15 | Engineer cannot defend a decision live | L | H | Mitigate | Nine ADRs with alternatives; private rehearsal notes outside the repository | Not applicable |
 | RK-16 | Swagger UI blank under CSP or no way to set the API key | M | M | Mitigate | CSP scoped and relaxed for Swagger paths; `@SecurityScheme` for the Authorize button; checked in a browser on day 1 | Blank page |
 
-Risks that materialised during the build, and how they were handled, are filled at submission from the ledger's debug entries.
+## Risks that materialised during the build
+
+Taken from the `debug` entries in `harness/ledger.yaml`; each has a hypothesis, a finding and a fix there.
+
+| When | What happened | Related risk | How it was handled | Evidence |
+|---|---|---|---|---|
+| T-000 | google-java-format 1.37.0 failed on every file under Spotless 3.10.4 (new commonmark dependency not loaded) | RK-06 | Pinned to 1.36.1, the version Spotless ships; JDK exports kept in `.mvn/jvm.config` | `harness/evidence/T-000/pre-gate-run-1.log`, `-2.log` |
+| T-000 | `ProblemDetails.toMap` dereferenced a null type on a bare `ProblemDetail` | RK-02 | Caught by its unit test and by SpotBugs; defaulted to `about:blank` | ledger T-000 debug |
+| T-000 | First CI run red on Windows: HC-12 flagged planned tasks whose impact analysis did not exist yet | RK-14 | Rule limited to done tasks; synthetic test added | ledger T-000 debug; CI run 38194833323 |
+| T-000 | First CI run red on Ubuntu: `mvnw` committed without the executable bit | RK-04 | `git update-index --chmod=+x` | same CI run |
+| T-000 | Marking a task done before its gate made HC-04 fail inside that very run | RK-14 | Lifecycle order fixed: gate, then done, then commit; red log kept | `harness/evidence/T-000/verify-1.log` |
+| T-001 | Checkstyle suppression path pattern matched only Linux paths, silently suppressing Javadoc rules on Windows | RK-02 | Portable separator class; Ubuntu runner caught the missing Javadoc | ledger T-001 debug; CI run 38196102890 |
+| T-001 | gitleaks flagged the random password Boot logged for its auto-configured default user | RK-10 | Default user auto-configuration excluded; allowlist entries with reasons in `.gitleaks.toml` | CI run 38196733778 |
+| T-003 | Numeric shorthand hosts (`http://2130706433/`) passed the block list because `URI` treats them as names | RK-09 | Rejected as ambiguous hosts; four test cases added | ledger T-003 debug |
+| T-008 | springdoc documented 200 for operations returning 201, 204 and 302 | RK-16 | Explicit `@ResponseStatus` and `@ApiResponse`; export regenerated; drift test guards it | ledger T-008 debug |
+| T-007 | Boot 4 moved `SecurityProperties.DEFAULT_FILTER_ORDER` and renamed `PAYLOAD_TOO_LARGE` | RK-02 | Boot 4 names used; recorded in `AGENTS.md` gotchas | ledger T-007 debug |
+
+## Limitations found while building
+
+| Area | Limitation | Trade-off accepted | What production would do |
+|---|---|---|---|
+| SAST reach | FindSecBugs 1.14.0 taint rules cover `javax.servlet`, not `jakarta.servlet`, so header and parameter handling in the filters is not taint-analysed | The regex allow-list on the request id and bounded parsing in the validator are the controls, verified by tests | Add a taint-aware scanner with Jakarta support (CodeQL or Semgrep rules) to CI |
+| Host names | No IDNA normalisation; two spellings of one internationalised name could both be stored | Rare for this prototype | Normalise with `java.net.IDN` at validation |
+| Rate limiting | Keyed on the socket address; behind a proxy all clients share one bucket until `server.forward-headers-strategy` is configured for that proxy | No proxy in the reviewer setup | Configure the trusted proxy and key on the forwarded address |
 
 ## Limitations and trade-offs
 

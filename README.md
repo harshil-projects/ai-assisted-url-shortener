@@ -2,6 +2,17 @@
 
 A URL shortener built by one engineer with AI assistance. Every change is reviewed, gated, and traceable.
 
+## Logical services and their APIs
+
+| Logical service | API | What it does |
+|---|---|---|
+| Write path | `POST /api/v1/links` | Creates a link. Body `{"url": "..."}` gets a random 7-character Base62 code; add `"customAlias": "demo-link"` (4 to 32 characters of `[A-Za-z0-9_-]`, not reserved) to choose the code. `201` with `Location`; `409` if the alias is taken |
+| Read path (hot) | `GET /{code}`, `HEAD /{code}` | `302` to the stored URL with `Cache-Control: no-store`; the click is recorded off the request thread; `HEAD` does not count a click |
+| Management and analytics | `GET /api/v1/links/{code}`, `DELETE /api/v1/links/{code}`, `GET /api/v1/links/{code}/stats` | Link metadata, hard delete with cascading click removal (`204`), click statistics (total, last 24 hours, last 7 days, last click) |
+| Platform | `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`, `/v3/api-docs`, `/swagger-ui.html` | Health probes are public; the other actuator endpoints need the API key in prod and are open in dev; OpenAPI 3.1 document and Swagger UI with an Authorize button |
+
+Every `/api/v1/**` call needs the `X-API-Key` header. Every error is an RFC 9457 Problem Details body. Full contract: `docs/reference/api.md` and `docs/reference/openapi.yaml`.
+
 This repository answers the assignment brief for an AI-assisted software engineering role. The engineer wrote the requirements, task specs, and prompts. The AI drafted code, tests, and documents inside those tasks. The engineer reviewed every diff, kept or rejected each file with a written reason, ran the quality gates, signed off on high-impact changes, and committed. Nothing was handed to an autonomous loop. The process itself is data under `harness/`, and a JUnit module fails the build when that data has a gap.
 
 ## Run it in three commands
@@ -35,11 +46,19 @@ Run these in a second PowerShell window while the service is up. `curl.exe --%` 
    curl.exe -s http://localhost:8080/actuator/health
    ```
    Expect a body that starts with `{"status":"UP"`.
-2. Create a link with a custom alias.
+2. Create a link. One endpoint serves both ways of getting a code: leave `customAlias` out and the service generates a random 7-character Base62 code; include it and that alias (4 to 32 characters of `[A-Za-z0-9_-]`, not a reserved word) becomes the code.
+
+   Random code:
+   ```powershell
+   curl.exe --% -i -X POST http://localhost:8080/api/v1/links -H "Content-Type: application/json" -H "X-API-Key: dev-only-key-do-not-use" -d "{\"url\":\"https://example.com/docs\"}"
+   ```
+   Expect `HTTP/1.1 201`, a `Location` such as `/api/v1/links/kX9z2Qa`, and a JSON body with `code`, `shortUrl`, `url`, and `createdAt`. Use the returned `code` in place of `demo-link` below if you prefer this link.
+
+   Custom alias (used by the remaining steps so they can be copied as written):
    ```powershell
    curl.exe --% -i -X POST http://localhost:8080/api/v1/links -H "Content-Type: application/json" -H "X-API-Key: dev-only-key-do-not-use" -d "{\"url\":\"https://example.com/docs\",\"customAlias\":\"demo-link\"}"
    ```
-   Expect `HTTP/1.1 201`, `Location: /api/v1/links/demo-link`, and a JSON body with `code`, `shortUrl`, `url`, and `createdAt`.
+   Expect `HTTP/1.1 201`, `Location: /api/v1/links/demo-link`, and the same body shape. Repeating this request answers `409` with type `/problems/alias-taken`; an alias such as `admin` answers `400` because it is reserved.
 3. Follow the short link.
    ```powershell
    curl.exe -i http://localhost:8080/demo-link
@@ -66,7 +85,7 @@ Run these in a second PowerShell window while the service is up. `curl.exe --%` 
    ```
    Expect `HTTP/1.1 204`.
 
-`.\scripts\demo.ps1` runs the same sequence plus a 429 check through `Invoke-RestMethod`, printing status codes and headers, with no quoting tricks.
+`.\scripts\demo.ps1` runs the same sequence through PowerShell's own HTTP client, printing status codes and headers, with no quoting tricks. To see the 429, send the create request more times than `app.ratelimit.create.capacity` allows within a minute (100 in the dev profile).
 
 ## Where the evidence is
 
