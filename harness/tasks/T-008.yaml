@@ -1,0 +1,48 @@
+id: T-008
+title: OpenAPI customizer, Swagger UI with security scheme, exported spec, drift test, API reference
+requirement: R-01
+activities: [implement, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-006, T-007]
+intent: >
+  Make the API self-describing and keep it honest: an OpenAPI 3.1 document with the Problem Details
+  responses from the error catalogue on every operation, a Swagger UI that works in a browser under
+  the CSP with an Authorize button for the API key, a committed copy of the spec that a test compares
+  with the runtime, and the API reference derived from code and tests.
+constraints:
+  - "springdoc-openapi-starter-webmvc-ui 3.1.1 is already in the pom from T-001; no pom change in this task"
+  - "A @SecurityScheme of type apiKey in header X-API-Key so the Authorize button works"
+  - "OpenApiErrorCustomizer adds the section 3.4 Problem Details responses to every operation; the document is OpenAPI 3.1"
+  - "docs/reference/openapi.yaml is exported from /v3/api-docs.yaml and OpenApiIT fails on any difference"
+  - "docs/reference/api.md is derived from the code and tests and carries the full error catalogue; do not invent features"
+  - "Do not modify SecurityConfig; if the UI is blank under the CSP, raise a follow-up high-impact task instead"
+  - "The manual browser check is recorded with a date in docs/scenarios/greenfield.md"
+acceptance_criteria:
+  - "WHEN a client GETs /v3/api-docs THE SYSTEM SHALL return an OpenAPI 3.1 document identical to docs/reference/openapi.yaml [FR-12]"
+  - "WHEN a reviewer opens /swagger-ui.html in a browser THE SYSTEM SHALL render the UI under the Swagger-only CSP with an Authorize button that sets X-API-Key [FR-12]"
+  - "WHEN any operation is read in the document THE SYSTEM SHALL list its Problem Details error responses from the catalogue [FR-12]"
+  - "WHEN docs/reference/api.md is compared with the runtime THE REFERENCE SHALL describe every endpoint, header, and error type the service produces [FR-12]"
+technical_context:
+  files:
+    - api/OpenApiErrorCustomizer.java
+    - config/OpenApiConfig.java
+    - url-shortener/src/main/resources/application.properties
+    - docs/reference/openapi.yaml
+    - docs/reference/api.md
+    - docs/scenarios/greenfield.md
+  interfaces:
+    - "OpenApiCustomizer bean adding error responses per operation"
+    - "OpenAPI bean with info and the apiKey security scheme"
+  patterns:
+    - committed spec compared with runtime as a gate
+    - documentation derived from code and tests
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.3"
+    - "docs/design/2026-10-12-system-design.md#3.4"
+    - "docs/design/2026-10-12-system-design.md#4.1"
+    - "docs/design/2026-10-12-system-design.md#8"
+verification:
+  - OpenApiIT.committedSpecMatchesRuntime
+  - "manual browser check of /swagger-ui.html with Authorize, dated in docs/scenarios/greenfield.md"

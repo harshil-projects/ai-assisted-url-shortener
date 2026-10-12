@@ -1,0 +1,40 @@
+id: T-104
+title: Refactor the top smell named in the impact analysis, tests unchanged
+requirement: R-02
+activities: [refactor]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-103]
+intent: >
+  Remove the single worst smell the T-101 analysis found, in small behaviour-preserving steps, with
+  the tightened suite from T-103 as the safety net. The test tree does not change. The ledger entry
+  states the measured improvement so the refactor is checkable, not asserted.
+constraints:
+  - "Behaviour-preservation contract: no public API change, no OpenAPI diff, no change under url-shortener/src/test"
+  - "The target is the smell named in harness/reviews/T-101-impact-analysis.md with its measured symptom; add its files to this spec before prompt v1"
+  - "Size limit per step: one smell, one commit, each step green before the next"
+  - "IF the smell lives in a section 5.6 surface THEN re-classify this task to high with the matching reason before prompt v1"
+  - "The measured improvement is stated with before and after values, for example method length or duplicated lines"
+acceptance_criteria:
+  - "WHEN the refactor commit is compared with its parent THE SYSTEM SHALL show no change under url-shortener/src/test [NFR-08]"
+  - "WHEN verify runs THE SYSTEM SHALL pass every gate with coverage not lower than before [NFR-09]"
+  - "WHEN OpenApiIT runs THE SYSTEM SHALL still match the committed spec [FR-12]"
+  - "WHEN the ledger entry is read THE ENTRY SHALL state the measured improvement for the smell named in T-101 [NFR-08]"
+technical_context:
+  files:
+    - harness/reviews/T-101-impact-analysis.md   # the refactor target is the file named there under the top smell; add it here before prompt v1
+  interfaces:
+    - "unchanged; the public surface is frozen for this task"
+  patterns:
+    - refactor playbook with a behaviour-preservation contract
+    - tests as the oracle, not the subject
+  references:
+    - "docs/design/2026-10-12-system-design.md#5.5"
+    - "docs/design/2026-10-12-system-design.md#6.2"
+    - "docs/design/2026-10-12-system-design.md#4.3"
+verification:
+  - "full suite green with git diff --stat <parent> -- url-shortener/src/test empty"
+  - "Checkstyle MethodLength and FileLength clean"
+  - OpenApiIT.committedSpecMatchesRuntime
+  - "before and after measurement recorded in the ledger rationale"

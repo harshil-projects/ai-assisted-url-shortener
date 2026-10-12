@@ -1,0 +1,58 @@
+id: T-007
+title: Spring Security chain, API key filter, headers, rate limiter before the chain, prod fail-fast
+requirement: R-01
+activities: [implement]
+impact: high
+impact_reasons: [security, dependency]
+status: todo
+depends_on: [T-004]
+intent: >
+  Protect /api/v1/** and the prod actuator with a stateless API key filter built inside
+  SecurityConfig, add the security headers and the Swagger-only CSP, place the Bucket4j rate limiter
+  before the security chain so key guessing is throttled too, and make the prod profile refuse to
+  start without a key. Bucket4j and Caffeine are the new coordinates.
+constraints:
+  - "Spring Security 7 lambda DSL only: no and(), no authorizeRequests, no AntPathRequestMatcher"
+  - "The API key filter is constructed inside SecurityConfig and added with addFilterBefore(..., AuthorizationFilter.class); it is never also a @Component"
+  - "Key compare uses MessageDigest.isEqual; the key comes from APP_API_KEY through @Validated AppProperties with @NotBlank; dev default is dev-only-key-do-not-use"
+  - "401 bodies are Problem Details through ProblemWriter with WWW-Authenticate ApiKey realm url-shortener"
+  - "Headers on every response: X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer; CSP only on Swagger UI paths with the section 3.3 policy"
+  - "RateLimitFilter is registered through FilterRegistrationBean before the security chain: one Bucket4j bucket per client IP in a Caffeine map with maximumSize 10000 and expireAfterAccess 10m; capacity 100 per minute in dev, 20 in prod, greedy refill; emits Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset"
+  - "server.forward-headers-strategy stays NONE; bucket4j_jdk17-core 8.21.0 and managed Caffeine are verified on Maven Central with URLs in the ledger"
+acceptance_criteria:
+  - "WHILE a request targets /api/v1/** THE SYSTEM SHALL require a valid X-API-Key header and respond 401 with WWW-Authenticate otherwise [FR-10]"
+  - "WHEN a client GETs /{code}, health, or the OpenAPI document without a key THE SYSTEM SHALL serve it [FR-10]"
+  - "IF a client exceeds the create rate limit THEN THE SYSTEM SHALL respond 429 with Retry-After as Problem Details [FR-11]"
+  - "IF an unauthenticated client floods creates THEN THE SYSTEM SHALL rate limit before authentication so key guessing is throttled [NFR-05]"
+  - "WHEN any response is sent THE SYSTEM SHALL include nosniff, DENY, and no-referrer headers, and CSP only on Swagger UI paths [NFR-05]"
+  - "IF the prod profile starts without APP_API_KEY THEN THE SYSTEM SHALL fail at startup with a validation message [NFR-05]"
+technical_context:
+  files:
+    - config/SecurityConfig.java
+    - config/RateLimitFilter.java
+    - config/FilterRegistrations.java
+    - config/AppProperties.java
+    - api/ProblemWriter.java
+    - url-shortener/pom.xml
+    - url-shortener/src/main/resources/application.properties
+    - url-shortener/src/main/resources/application-dev.properties
+    - url-shortener/src/main/resources/application-prod.properties
+  interfaces:
+    - "SecurityFilterChain bean in SecurityConfig"
+    - "ApiKeyFilter(AppProperties, ProblemWriter) nested or package-private"
+    - "RateLimitFilter(AppProperties, ProblemWriter) extends OncePerRequestFilter"
+  patterns:
+    - rate limiter before authentication
+    - constant-time key comparison
+    - fail fast at startup through validated properties
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.3"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#3.7"
+    - "docs/design/2026-10-12-system-design.md#3.9"
+verification:
+  - ApiKeyIT
+  - RateLimitIT
+  - RateLimitIT.limitsUnauthenticatedCreates
+  - SecurityHeadersIT
+  - ProdStartupIT

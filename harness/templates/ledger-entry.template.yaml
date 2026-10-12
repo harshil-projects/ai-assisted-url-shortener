@@ -1,0 +1,57 @@
+# Ledger record shapes (design section 5.4).
+# harness/ledger.yaml holds three lists. Copy the block you need under the matching top-level key.
+#   entries   one per task, written by the engineer after review
+#   gates     one per gate run, appended by scripts/gate.ps1, never written by hand
+#   signoffs  one per high-impact task, written by the engineer after the review artifact exists
+# Validated by harness-check HC-03 to HC-07 and HC-11.
+
+entries:
+  - task: T-000                                       # The task id. The task file must exist (HC-06).
+    tool: Claude Code                                 # The AI tool used. Named here and never in commit messages (ADR 0009).
+    model: model-id-as-reported-by-the-tool           # The exact model id string the tool reports.
+    prompts:                                          # Every prompt version used, in order. Each file must exist (HC-06).
+      - harness/prompts/T-000/v1.md
+    raw_output: harness/evidence/T-000/ai-raw.patch   # Written by scripts/snap.ps1. Required unless activities is only [document].
+    files:                                            # Every file the task changed, from the scripts/snap.ps1 list. One status each.
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/Example.java, status: generated }   # kept as drafted
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ExampleController.java, status: edited } # changed by the engineer
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ExampleControllerTest.java, status: rejected } # discarded
+    rationale: >
+      Engineer-asserted. Why each edit and each rejection happened, in the engineer's words.
+      Name the Maven Central URL for any dependency the task introduced (SAI-05).
+    rejected_notes:                                   # One note per rejected file (HC-11). Which file, what was wrong, what replaced it.
+      - ExampleControllerTest asserted on exception message text, brittle; rewritten against status and problem type
+    debug: []                                         # Optional. One map per hypothesis for debug activities, in the order tried.
+    # debug:
+    #   - { hypothesis: "what and why", finding: "confirmed or refuted, with the evidence", fix: "one sentence" }
+    reviewer: Harshil
+    started_at: 2026-01-01T00:00:00Z                  # ISO-8601 UTC. When the v1 prompt was first run.
+    finished_at: 2026-01-01T00:00:00Z                 # ISO-8601 UTC. When this entry was completed.
+
+gates:
+  - task: T-000
+    commit: "3f2a9c1d8b7e6f5a4c3b2a1908f7e6d5c4b3a291"   # git rev-parse HEAD at run time, or uncommitted when there is no HEAD.
+    tree: dirty                                       # dirty when the working tree had uncommitted changes at run time, else clean.
+    run_at: "2026-01-01T00:00:00Z"                    # Written by the script from the system clock, never by hand.
+    overall: pass                                     # pass | fail, from the Maven exit code.
+    results:                                          # Every key is required (HC-04). Values: pass | fail | not-reached | "skipped: <reason>".
+      format: pass                                    # Spotless check
+      style: pass                                     # Checkstyle
+      sast: pass                                      # SpotBugs with FindSecBugs
+      tests: pass                                     # Surefire in url-shortener
+      coverage: pass                                  # JaCoCo check
+      traceability: pass                              # Surefire in harness-check
+      secrets: pass                                   # The regex scan inside the harness-check tests; pass when traceability passes
+      perf: "skipped: opt-in profile not run"         # pass or fail only when the script ran with -Perf
+    log: harness/evidence/T-000/verify-1.log          # The teed Maven output for this run. N increments per run; red runs are kept.
+    # failed_goal: added by the script on a red run, with the Maven goal and project that failed
+    # ci_run: optional, added by hand once CI has run the same commit, for example https://github.com/<org>/<repo>/actions/runs/<id>
+
+signoffs:
+  - task: T-000
+    reasons: [schema]                                 # Subset of: schema, security, dependency, data-deletion. Matches the task's impact_reasons.
+    review: harness/reviews/T-000.md                  # The fresh-context review artifact. Must exist (HC-05).
+    signed_by: Harshil
+    signed_at: 2026-01-01T00:00:00Z                   # ISO-8601 UTC, after the review artifact was written.
+    statement: >
+      One or two sentences naming what was checked and against which design section.

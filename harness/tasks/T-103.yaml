@@ -1,0 +1,44 @@
+id: T-103
+title: Regression suite for expiry and documentation improvements
+requirement: R-02
+activities: [test-gen, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-102]
+intent: >
+  Tighten the test suite around expiry with an edge-case table and bring the API reference,
+  changelog, and README in line with the behaviour the code now has. Coverage must not drop below
+  the figures recorded before T-102 began.
+constraints:
+  - "Record the JaCoCo line and branch figures from the last green gate before T-102 in docs/scenarios/brownfield.md and compare after this task"
+  - "Tests are added, not modified; an existing expectation changes only when it was wrong, with a note in the ledger (SAI-06)"
+  - "Edge cases at least: expiry exactly at now, offsets other than Z, HEAD on an expired link, stats and metadata of an expired link, delete of an expired link, create with expiresAt absent"
+  - "Documentation is derived from code and tests: docs/reference/api.md, CHANGELOG.md in Keep a Changelog form, README examples"
+  - "No production code change in this task; a defect found here goes to T-105"
+acceptance_criteria:
+  - "WHEN the suite runs after this task THE SYSTEM SHALL report line and branch coverage not lower than the recorded pre-T-102 figures [NFR-09]"
+  - "WHEN the edge-case tests run THE SYSTEM SHALL pass each case with a fixed clock [FR-14]"
+  - "WHEN docs/reference/api.md is compared with the runtime THE REFERENCE SHALL describe expiresAt, expired, and the 410 link-expired type [FR-14]"
+  - "WHEN CHANGELOG.md is read THE CHANGELOG SHALL list expiry under Unreleased with Added and Changed sections [NFR-11]"
+technical_context:
+  files:
+    - url-shortener/src/test/java/dev/harshil/shortener/
+    - docs/reference/api.md
+    - CHANGELOG.md
+    - README.md
+    - docs/scenarios/brownfield.md
+  interfaces:
+    - "fixed Clock bean under the test profile"
+  patterns:
+    - edge-case table from the test-gen playbook
+    - documentation derived from code and tests
+  references:
+    - "docs/design/2026-10-12-system-design.md#4.2"
+    - "docs/design/2026-10-12-system-design.md#5.5"
+    - "docs/design/2026-10-12-system-design.md#6.2"
+verification:
+  - ExpiryIT
+  - LinkFlowIT
+  - StatsIT
+  - "JaCoCo figures compared with the baseline recorded in docs/scenarios/brownfield.md"

@@ -1,0 +1,41 @@
+# Task spec template (design section 5.3).
+# Copy to harness/tasks/T-NNN.yaml and fill every field. Validated by harness-check:
+#   HC-01 required fields and enum values, HC-02 depends_on exists and has no cycle,
+#   HC-03 and HC-04 a done task has a ledger entry and a passing gate, HC-05 high impact needs a sign-off,
+#   HC-08 a done non-document task has a v1.md prompt.
+
+id: T-000                          # ^T-\d{3}$. Unique. Matches the file name and the commit trailer "Task: T-000".
+title: One line, imperative, under 80 characters
+requirement: R-01                  # The requirement record this task delivers: harness/requirements/R-0N.md.
+activities: [implement]            # One or more of: implement, debug, refactor, test-gen, document, review-prep.
+                                   # Each activity has a playbook in harness/playbooks/ that shapes the prompt.
+impact: normal                     # high | normal. high when any reason below applies (design section 5.6).
+impact_reasons: []                 # When high, a subset of: schema, security, dependency, data-deletion. Empty when normal.
+                                   #   schema        any Flyway migration or entity mapping
+                                   #   security      SecurityConfig, API key filter, UrlValidator, headers, reserved words, rate limiter
+                                   #   dependency    any new or changed coordinate in a pom
+                                   #   data-deletion delete endpoint behaviour
+status: todo                       # todo | in-progress | done | dropped. done requires a ledger entry and a gate with overall: pass.
+depends_on: []                     # Task ids that must be done first. No cycles. Empty for the first task.
+intent: >
+  Two or three sentences. What the task delivers and why, in terms a reviewer can check against the design.
+constraints:                       # Rules the draft must obey. The playbook copies them into the prompt verbatim.
+  - Written as a rule, for example "All errors are RFC 9457 Problem Details through the shared writer"
+  - For example "No new dependencies"
+acceptance_criteria:               # EARS form with RFC 2119 keywords. Each one maps to a test in verification.
+  - WHEN <trigger> THE SYSTEM SHALL <response>
+  - IF <unwanted condition> THEN THE SYSTEM SHALL <response>
+  - WHILE <state> THE SYSTEM SHALL <response>
+technical_context:
+  files: []                        # Paths under url-shortener/src/main/java/dev/harshil/shortener/ the draft may touch,
+                                   # for example api/LinkController.java. Tests go in the matching src/test path.
+  interfaces: []                   # Signatures to implement or call, for example "LinkService.create(CreateLinkRequest) -> Link".
+  patterns: []                     # Named patterns from the design, for example "one transaction per allocation attempt".
+  references: []                   # Design anchors, for example docs/design/2026-10-12-system-design.md#3.6.
+  # Brownfield tasks only (rule HC-12). The path of the engineer-written impact analysis, a Markdown file with
+  # a heading named "Predicted files" followed by one bullet per main-source path, bare or in backticks.
+  # harness-check compares that list with the files the task's commits changed under src/main/; tests and
+  # docs are exempt. Uncomment for tasks that name an impact analysis.
+  # impact_analysis: harness/reviews/T-101-impact-analysis.md
+verification: []                   # Test class names that must pass, for example [LinkControllerTest, LinkFlowIT].
+                                   # The gate log under harness/evidence/T-000/ is the proof they ran.

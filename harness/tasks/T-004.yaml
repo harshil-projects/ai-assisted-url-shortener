@@ -1,0 +1,59 @@
+id: T-004
+title: Create link endpoint with per-attempt allocation and Problem Details
+requirement: R-01
+activities: [implement]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-002, T-003]
+intent: >
+  Expose POST /api/v1/links so clients create short links from validated URLs, with the allocation
+  loop outside the transaction and one transaction per insert attempt. This task also introduces
+  the single error mechanism, ApiExceptionHandler plus ProblemWriter, and the request size filter,
+  so every later endpoint reuses them.
+constraints:
+  - "LinkService.create is not transactional; LinkAllocator.insert is @Transactional on a separate bean, one attempt per transaction, at most five attempts"
+  - "DataIntegrityViolationException is caught outside the proxy and the constraint name uk_links_code is checked; random collision retries, custom alias maps to 409; existsByCode is the fast path"
+  - "All errors are RFC 9457 Problem Details through ApiExceptionHandler extending ResponseEntityExceptionHandler and the shared ProblemWriter; every body carries requestId and timestamp"
+  - "DTOs are records with boxed types and @NotNull; application/json only, otherwise 415"
+  - "RequestSizeFilter rejects bodies over 16 KiB on /api/v1/** with 413 and wraps chunked bodies with a counting stream"
+  - "shortUrl comes from app.base-url when set, otherwise from the request scheme, host, and port"
+  - "No new dependencies"
+acceptance_criteria:
+  - "WHEN a client POSTs a valid absolute http or https URL as JSON THE SYSTEM SHALL create a link with a unique 7-character Base62 code and respond 201 with Location and the link body [FR-01]"
+  - "WHEN a client supplies a custom alias matching ^[A-Za-z0-9_-]{4,32}$ that is not reserved and not taken THE SYSTEM SHALL use it as the code [FR-02]"
+  - "IF a custom alias is already taken, including when two requests race THEN THE SYSTEM SHALL respond 409 alias-taken [FR-03]"
+  - "IF the URL is not absolute http or https, contains credentials, exceeds 2048 characters, or targets a loopback, private, link-local, or metadata host THEN THE SYSTEM SHALL respond 400 with field errors [FR-04]"
+  - "IF the request body exceeds 16 KiB or the content type is not application/json THEN THE SYSTEM SHALL respond 413 or 415 as Problem Details [FR-01]"
+  - "IF five random codes collide in a row THEN THE SYSTEM SHALL respond 500 code-generation-exhausted without a stack trace [FR-01]"
+technical_context:
+  files:
+    - api/LinkController.java
+    - api/dto/CreateLinkRequest.java
+    - api/dto/LinkResponse.java
+    - api/ApiExceptionHandler.java
+    - api/ProblemWriter.java
+    - api/ProblemTypes.java
+    - service/LinkService.java
+    - service/LinkAllocator.java
+    - domain/AliasTakenException.java
+    - config/RequestSizeFilter.java
+    - config/FilterRegistrations.java
+  interfaces:
+    - "LinkService.create(CreateLinkRequest) -> Link"
+    - "LinkAllocator.insert(String code, String url, Instant expiresAt) -> Link"
+    - "ProblemWriter.write(HttpServletResponse, ProblemType, HttpStatus, String requestId)"
+  patterns:
+    - one transaction per allocation attempt
+    - records for DTOs
+    - one handler subclass and one writer for every error body
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.3"
+    - "docs/design/2026-10-12-system-design.md#3.4"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#4.3"
+verification:
+  - LinkControllerTest.rejectsInvalidUrls
+  - LinkAllocatorTest.aliasRaceMapsTo409
+  - LinkFlowIT.createsLinkAndReturns201
+  - LinkFlowIT.acceptsCustomAlias

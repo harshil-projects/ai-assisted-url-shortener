@@ -1,0 +1,52 @@
+id: T-009
+title: Integration flow tests, perf smoke, test isolation, README reviewer path, ADRs, greenfield evidence
+requirement: R-01
+activities: [test-gen, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-008]
+intent: >
+  Close the greenfield scenario: end-to-end integration tests from create to redirect to stats,
+  the Problem Details shape test across filters and handler, the actuator test, the opt-in latency
+  smoke test, table cleanup for isolation, the README reviewer paths, ADRs 0001 to 0007 finalised
+  against the code, and the greenfield scenario document assembled from evidence that exists.
+constraints:
+  - "All tests run under Surefire; integration tests use @SpringBootTest on a random port with RestTestClient and clean their tables in @AfterEach"
+  - "RedirectLatencySmokeTest is tagged perf, uses HdrHistogram, warms up 200 requests, measures 2000, asserts p99 under 200 ms, and is excluded by default"
+  - "One behaviour per test, names read method_scenario_expectedOutcome or should...When..., no logic in tests, SAME_THREAD timeouts only"
+  - "Every generated test diff is reviewed for deleted, skipped, or weakened assertions before acceptance (SAI-06)"
+  - "README has ten, thirty, and sixty minute reading paths, the reviewer-path checklist, the proxy and JDK fallbacks from RK-03 and RK-04, and the accountability statement"
+  - "ADRs and the scenario document are derived from code, tests, and ledger entries; evidence links point only at files that exist"
+  - "No pom change; HdrHistogram was added in T-001"
+acceptance_criteria:
+  - "WHEN LinkFlowIT runs THE SYSTEM SHALL create a link, follow the redirect, record the click, and report it in stats within the Awaitility window [FR-01]"
+  - "WHEN ProblemDetailIT exercises the 401, 413, and 429 filter paths and one handler path THE SYSTEM SHALL return the same Problem Details shape with requestId and timestamp on each [NFR-07]"
+  - "WHEN ActuatorIT runs THE SYSTEM SHALL serve health with liveness and readiness groups, info with build details, metrics, and prometheus [FR-12]"
+  - "WHEN the perf profile runs on Ubuntu CI THE SYSTEM SHALL serve 2000 warm redirects with p99 under 200 ms, a smoke threshold and not a capacity claim [NFR-02]"
+  - "WHEN a reviewer follows the README from an empty local repository THE SYSTEM SHALL build, run, and answer the demo script within the recorded time [NFR-01]"
+technical_context:
+  files:
+    - url-shortener/src/test/java/dev/harshil/shortener/
+    - README.md
+    - docs/decisions/
+    - docs/scenarios/greenfield.md
+    - docs/fresh-clone-transcript.md
+    - scripts/demo.ps1
+  interfaces:
+    - "@SpringBootTest(webEnvironment = RANDOM_PORT) with @AutoConfigureRestTestClient"
+    - "@Tag(perf) on RedirectLatencySmokeTest"
+  patterns:
+    - test pyramid shares from section 4.2
+    - evidence links added as tasks complete, validation written last
+  references:
+    - "docs/design/2026-10-12-system-design.md#4.2"
+    - "docs/design/2026-10-12-system-design.md#3.8"
+    - "docs/design/2026-10-12-system-design.md#2.5"
+    - "docs/design/2026-10-12-system-design.md#6.1"
+verification:
+  - LinkFlowIT
+  - ProblemDetailIT
+  - ActuatorIT
+  - RedirectLatencySmokeTest
+  - "fresh-clone check from an empty local repository recorded in docs/fresh-clone-transcript.md"

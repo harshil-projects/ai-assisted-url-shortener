@@ -1,0 +1,57 @@
+id: T-005
+title: Redirect, click recording on a dedicated executor, request id filter, metrics
+requirement: R-01
+activities: [implement]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-004]
+intent: >
+  Serve GET /{code} as one indexed read returning 302 with an explicit no-store, hand an immutable
+  click event to a bounded executor so analytics can never fail or delay a redirect, add the
+  correlation id filter that every log line and error body uses, and register the custom counters.
+constraints:
+  - "Path regex [A-Za-z0-9_-]{4,32} on the redirect mapping so favicon.ico and dotfiles never reach the database"
+  - "302 with Location and Cache-Control no-store set by the controller; HEAD resolves but is not counted"
+  - "The request thread builds ClickRecorded(linkId, occurredAt, requestId) and publishes it; nothing from HttpServletRequest is touched off the request thread"
+  - "ClickRecorder is an @Async(clickRecorderExecutor) @EventListener; the executor bean has defaultCandidate=false, core 2, max 4, queue 1000, rejection handler that increments shortener.clicks.dropped and drops, waitForTasksToCompleteOnShutdown true, awaitTerminationSeconds 10"
+  - "Exceptions inside the listener are caught and counted, never propagated"
+  - "RequestIdFilter runs first, echoes X-Request-Id when it is at most 64 characters of [A-Za-z0-9-], otherwise generates one; MDC is cleared in finally"
+  - "DataAccessResourceFailureException and CannotGetJdbcConnectionException map to 503 with Retry-After 5"
+acceptance_criteria:
+  - "WHEN a client GETs /{code} for a known live link THE SYSTEM SHALL respond 302 with Location set to the stored URL and Cache-Control containing no-store [FR-05]"
+  - "IF the code is unknown or malformed THEN THE SYSTEM SHALL respond 404 without a database lookup for malformed codes [FR-06]"
+  - "WHEN a redirect is served THE SYSTEM SHALL record a click event off the request thread and the request thread SHALL only hand an immutable event to a bounded queue [FR-07]"
+  - "IF event persistence throws or the queue is full THEN THE SYSTEM SHALL still return 302 and increment shortener.clicks.dropped [NFR-03]"
+  - "WHEN any request is handled THE SYSTEM SHALL carry a bounded, sanitised requestId in logs, the X-Request-Id response header, and error bodies [NFR-07]"
+  - "WHEN redirects and creates occur THE SYSTEM SHALL expose shortener.redirects tagged outcome hit, miss, or expired and shortener.links.created through /actuator/metrics [NFR-07]"
+technical_context:
+  files:
+    - api/RedirectController.java
+    - api/ApiExceptionHandler.java
+    - service/LinkService.java
+    - service/ClickRecorder.java
+    - domain/ClickRecorded.java
+    - domain/LinkNotFoundException.java
+    - config/ClickRecorderExecutorConfig.java
+    - config/RequestIdFilter.java
+    - config/FilterRegistrations.java
+  interfaces:
+    - "LinkService.resolve(String code) -> Link"
+    - "ClickRecorded(Long linkId, Instant occurredAt, String requestId) record"
+    - "ClickRecorder.on(ClickRecorded) async listener"
+  patterns:
+    - immutable event on the request thread, insert on the executor thread
+    - drop and count on saturation
+    - explicit no-store in the controller
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#3.8"
+    - "docs/design/2026-10-12-system-design.md#3.10"
+    - "docs/design/2026-10-12-system-design.md#3.11"
+verification:
+  - RedirectIT.redirectsWith302
+  - RedirectIT.unknownCodeIs404
+  - ClickRecordingIT.recordsClickAfterRedirect
+  - ClickRecordingIT.redirectSurvivesAnalyticsFailure
+  - ClickRecorderExecutorTest.rejectionIsCountedNotBlocking

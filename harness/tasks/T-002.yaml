@@ -1,0 +1,53 @@
+id: T-002
+title: Schema V1, entities, repositories, test meta-annotation, migration proof
+requirement: R-01
+activities: [implement, test-gen]
+impact: high
+impact_reasons: [schema]
+status: todo
+depends_on: [T-001]
+intent: >
+  Create the minimal greenfield schema through Flyway V1, the Link and ClickEvent entities, the two
+  Spring Data repositories, and the single test-profile meta-annotation, then prove the migration
+  with a data slice test. The schema is deliberately minimal so the brownfield scenario requires a
+  real migration later.
+constraints:
+  - "SQL in the subset accepted by both H2 in PostgreSQL mode and PostgreSQL; identity columns declared explicitly"
+  - "Columns are TIMESTAMP WITH TIME ZONE and entity fields are Instant so ddl-auto=validate passes under Hibernate 7"
+  - "Constraint and index names exactly uk_links_code, fk_click_events_link, ix_click_events_link_time"
+  - "ClickEvent.linkId is a plain Long column; Link has no collection of events; cascade delete lives in the database"
+  - "Link.equals and hashCode use code; toString excludes original_url"
+  - "No column for IP address or user agent (ADR 0006)"
+  - "Every test carries the single @ActiveProfiles(test) meta-annotation; the test profile uses in-memory H2 in PostgreSQL mode"
+acceptance_criteria:
+  - "WHEN the application starts under any profile THE SYSTEM SHALL apply V1 and pass ddl-auto=validate [NFR-10]"
+  - "WHEN MigrationTest runs under the test profile THE SYSTEM SHALL create links and click_events with the named unique constraint, foreign key with cascade, and index [NFR-10]"
+  - "WHILE the schema exists THE SYSTEM SHALL contain no column holding an IP address or a user-agent string [NFR-06]"
+  - "WHEN a Link is rendered through toString THE SYSTEM SHALL omit original_url [NFR-05]"
+  - "WHEN ClickEventRepository saves an event THE SYSTEM SHALL issue one INSERT with no preceding SELECT [FR-07]"
+technical_context:
+  files:
+    - domain/Link.java
+    - domain/ClickEvent.java
+    - repository/LinkRepository.java
+    - repository/ClickEventRepository.java
+    - url-shortener/src/main/resources/db/migration/V1__create_links_and_click_events.sql
+    - url-shortener/src/main/resources/application.properties
+    - url-shortener/src/test/resources/application-test.properties
+    - url-shortener/src/test/java/dev/harshil/shortener/support/TestProfile.java
+  interfaces:
+    - "LinkRepository.findByCode(String) -> Optional<Link>"
+    - "LinkRepository.existsByCode(String) -> boolean"
+    - "ClickEventRepository extends JpaRepository<ClickEvent, Long>"
+  patterns:
+    - migrations in the H2 and PostgreSQL SQL intersection
+    - Instant mapped to TIMESTAMP WITH TIME ZONE
+    - one ALTER statement per column in later migrations
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.5"
+    - "docs/design/2026-10-12-system-design.md#3.9"
+    - "docs/design/2026-10-12-system-design.md#5.6"
+verification:
+  - MigrationTest
+  - ClickEventRepositoryTest
+  - ClickEventTest

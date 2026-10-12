@@ -1,0 +1,52 @@
+id: T-001
+title: Build gates and CI
+requirement: R-01
+activities: [implement]
+impact: high
+impact_reasons: [dependency]
+status: todo
+depends_on: [T-000]
+intent: >
+  Wire every default quality gate into mvnw verify on the hello-world app so the gates exist before
+  the first product class: Spotless, Checkstyle with the project rules, SpotBugs with FindSecBugs,
+  JaCoCo thresholds over one exec file, the enforcer, the Mockito agent, the perf profile, the CI
+  matrix, Dependabot, and gitleaks. Test-scoped and documentation coordinates that later tasks need
+  (HdrHistogram, springdoc) are added and verified here so those tasks do not touch the poms.
+constraints:
+  - "Plugin and tool versions exactly as section 4.1; the Checkstyle engine is overridden to 14.3.0 or the plugin silently uses 9.3"
+  - "Checkstyle violationSeverity is warning and includeTestSourceDirectory is true, otherwise the Google rules never fail"
+  - "One JaCoCo exec file; Mockito agent on the argLine with an empty argLine property so JaCoCo chains"
+  - "excludedGroups=perf by default; a perf profile enables the tagged test"
+  - "SpotBugs exclusions live in config/spotbugs/exclude.xml with a reason per entry"
+  - "No product code in this task beyond what the hello app needs to exercise each gate"
+acceptance_criteria:
+  - "IF a Java file is not google-java-format clean THEN THE SYSTEM SHALL fail the validate phase [NFR-08]"
+  - "IF a method exceeds 50 lines, a file exceeds 400 lines, or a field carries @Autowired THEN THE SYSTEM SHALL fail verify with a Checkstyle violation [NFR-08]"
+  - "IF bundle line coverage is below 0.80, branch below 0.70, or a non-excluded class is missed THEN THE SYSTEM SHALL fail verify [NFR-09]"
+  - "WHEN verify runs THE SYSTEM SHALL run SpotBugs with FindSecBugs at effort max and threshold medium and fail on unreviewed findings [NFR-05]"
+  - "WHEN a push or pull request happens THE SYSTEM SHALL run verify on windows-latest and ubuntu-latest, with -Pperf on Ubuntu, and the gitleaks job [NFR-01]"
+technical_context:
+  files:
+    - pom.xml
+    - url-shortener/pom.xml
+    - harness-check/pom.xml
+    - config/checkstyle/checkstyle.xml
+    - config/checkstyle/suppressions.xml
+    - config/spotbugs/exclude.xml
+    - .github/workflows/ci.yml
+    - .github/dependabot.yml
+  interfaces:
+    - "mvnw -ntp verify"
+    - "mvnw -ntp verify -Pperf"
+  patterns:
+    - all tests under Surefire so integration coverage counts
+    - fail the build, not a report
+  references:
+    - "docs/design/2026-10-12-system-design.md#4.1"
+    - "docs/design/2026-10-12-system-design.md#4.5"
+    - "docs/design/2026-10-12-system-design.md#2.2"
+verification:
+  - UrlShortenerApplicationTest
+  - "mvnw verify green on the hello-world app with every gate active"
+  - "a deliberately misformatted file fails validate, recorded in verify-1.log, then reverted"
+  - "CI run green on windows-latest and ubuntu-latest"

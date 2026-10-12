@@ -1,0 +1,40 @@
+id: T-010
+title: Fresh-context review of the greenfield code with a defect-candidate list
+requirement: R-01
+activities: [review-prep]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-009]
+intent: >
+  Run the review-prep playbook in a fresh context over the finished greenfield code and the task
+  specs, producing a list of defect candidates with reproduction notes. The engineer marks each
+  candidate real or not with a one-line reason. The list is the input for T-105 and part of the
+  evidence that AI output was treated as untrusted.
+constraints:
+  - "Fresh context: no prior session state; inputs are the source tree, the task specs T-001 to T-009, and the section 4.6 checklist"
+  - "Report gaps against the task specs and the design, not style; the gates already cover style"
+  - "Each candidate records location, the claim, a reproduction note, and the engineer's verdict real or not with a reason"
+  - "No code changes in this task; the raw review output is snapshotted with scripts/snap.ps1 before the engineer annotates it"
+  - "Candidates that touch a section 5.6 surface are flagged so T-105 can re-classify its impact"
+acceptance_criteria:
+  - "WHEN the review completes THE REVIEW ARTIFACT SHALL list every candidate considered, each marked real or not with a reason [NFR-11]"
+  - "IF a candidate is marked real THEN THE REVIEW ARTIFACT SHALL include a reproduction note sufficient to start T-105 without re-investigation [NFR-11]"
+  - "WHEN the ledger entry is written THE SYSTEM SHALL have a v1 prompt and a raw-output snapshot for this task, as HC-06 and HC-08 require [NFR-11]"
+technical_context:
+  files:
+    - harness/reviews/greenfield-review.md
+    - harness/prompts/T-010/v1.md
+    - docs/scenarios/greenfield.md
+  interfaces:
+    - "review-prep playbook: diff summary, section 4.6 checklist, gaps against the spec"
+  patterns:
+    - fresh-context review
+    - rejections and verdicts as evidence
+  references:
+    - "docs/design/2026-10-12-system-design.md#5.5"
+    - "docs/design/2026-10-12-system-design.md#4.6"
+    - "docs/design/2026-10-12-system-design.md#6.1"
+verification:
+  - "engineer walkthrough of harness/reviews/greenfield-review.md: every candidate has a verdict and a reason"
+  - "harness-check HC-06 and HC-08 pass for T-010 once its ledger entry exists"

@@ -1,0 +1,18 @@
+# Engineering ledger. One entry per AI-assisted task, one gate record per gate run, one sign-off per
+# high-impact task. Shapes and field comments: harness/templates/ledger-entry.template.yaml.
+# Validated by harness-check rules HC-03 to HC-07 and HC-11 inside mvnw verify.
+#
+# File statuses, in the words of the assignment brief:
+#   generated   kept as the AI produced it
+#   edited      changed by the engineer before commit
+#   rejected    discarded; a matching note in rejected_notes is required (HC-11)
+#
+# status and rationale are engineer-asserted. The kept ratio per file is computed by harness-check from
+# harness/evidence/T-NNN/ai-raw.patch against the committed diff, and the report labels which numbers are
+# computed and which are asserted.
+#
+# entries and signoffs are written by hand. gates are appended by scripts/gate.ps1, which rewrites
+# "gates: []" to "gates:" on the first run and inserts each record at the end of the gates list.
+entries: []
+gates: []
+signoffs: []

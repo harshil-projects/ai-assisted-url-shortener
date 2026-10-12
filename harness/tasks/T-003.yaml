@@ -1,0 +1,49 @@
+id: T-003
+title: CodeGenerator, UrlValidator, ReservedWords, LogSanitizer with unit tests
+requirement: R-01
+activities: [test-gen, implement]
+impact: high
+impact_reasons: [security]
+status: todo
+depends_on: [T-001]
+intent: >
+  Build the pure-logic classes the create path depends on, tests first: the SecureRandom Base62
+  code generator, the URL validator that blocks intranet link laundering, the reserved alias list,
+  and the log sanitiser. UrlValidator and ReservedWords are named security surfaces in section 5.6,
+  so this task carries a sign-off even though it adds no endpoint.
+constraints:
+  - "Write the failing parameterised tests first; about 30 URLs for the validator table"
+  - "CodeGenerator uses SecureRandom over [A-Za-z0-9] with length 7; no counter, no hash of the URL"
+  - "UrlValidator parses with java.net.URI, performs no DNS resolution, and lowercases scheme and host"
+  - "Reject list exactly as section 3.6: loopback, RFC 1918, link-local, 0.0.0.0/8, multicast, ::1, fc00::/7, fe80::/10, 169.254.169.254, localhost, metadata.google.internal"
+  - "ReservedWords holds exactly the section 3.6 list; alias regex ^[A-Za-z0-9_-]{4,32}$ is case-sensitive"
+  - "LogSanitizer strips CR, LF, and other control characters; no new dependencies"
+acceptance_criteria:
+  - "WHEN next() is called THE SYSTEM SHALL return a 7-character string over the Base62 alphabet drawn from SecureRandom [FR-01]"
+  - "IF a URL is not absolute http or https, carries user info, exceeds 2048 characters, or targets a loopback, private, link-local, multicast, unique-local, or metadata host THEN THE SYSTEM SHALL return field violations [FR-04]"
+  - "WHEN a URL passes validation THE SYSTEM SHALL return it with scheme and host lowercased and without any DNS lookup [FR-04]"
+  - "IF an alias is in the reserved list or does not match ^[A-Za-z0-9_-]{4,32}$ THEN THE SYSTEM SHALL report it invalid [FR-02]"
+  - "WHEN a user-controlled value is prepared for logging THE SYSTEM SHALL remove CR, LF, and control characters [NFR-05]"
+technical_context:
+  files:
+    - service/CodeGenerator.java
+    - service/UrlValidator.java
+    - domain/ReservedWords.java
+    - domain/LogSanitizer.java
+  interfaces:
+    - "CodeGenerator.next() -> String"
+    - "UrlValidator.validate(String) -> canonical URL or a list of field violations"
+    - "ReservedWords.contains(String) -> boolean"
+    - "LogSanitizer.clean(String) -> String"
+  patterns:
+    - pure classes with no Spring dependency beyond a stereotype annotation
+    - parameterised table tests
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#3.7"
+    - "docs/design/2026-10-12-system-design.md#5.6"
+verification:
+  - CodeGeneratorTest
+  - UrlValidatorTest
+  - ReservedWordsTest
+  - LogSanitizerTest

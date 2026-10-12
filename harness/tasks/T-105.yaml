@@ -1,0 +1,38 @@
+id: T-105
+title: Fix one real defect from the greenfield review with a failing-first regression test
+requirement: R-02
+activities: [debug]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-104]
+intent: >
+  Take one candidate marked real in harness/reviews/greenfield-review.md, reproduce it, state a
+  hypothesis, write a regression test that fails on the parent commit, apply the smallest fix, and
+  show the test passing. If no candidate is real, the task is relabelled an enhancement and says so.
+constraints:
+  - "Debug playbook: symptom, reproduction command, hypothesis before any code change, finding, fix; all recorded in the ledger debug block"
+  - "The regression test is named after the defect and is added, never a modification of an existing test; its red run on the parent commit and green run after the fix are both logged under harness/evidence/T-105/"
+  - "Smallest fix that makes the test pass; no refactoring in the same commit"
+  - "IF the defect lives in a section 5.6 surface THEN re-classify this task to high with the matching reason before prompt v1; add the defect's files to this spec at the same time"
+  - "IF no candidate is a real defect THEN rename the task to an enhancement in title and intent and state it in the ledger rationale"
+acceptance_criteria:
+  - "WHEN the regression test runs against the parent commit THE SYSTEM SHALL fail it, with the run logged [NFR-09]"
+  - "WHEN the regression test runs after the fix THE SYSTEM SHALL pass it and the whole suite [NFR-09]"
+  - "WHEN the ledger entry is read THE ENTRY SHALL show hypothesis, finding, and fix for the defect [NFR-11]"
+  - "IF no candidate in harness/reviews/greenfield-review.md is a real defect THEN THE TASK SHALL be relabelled an enhancement and the ledger entry SHALL say so [NFR-11]"
+technical_context:
+  files:
+    - harness/reviews/greenfield-review.md   # the defect's main-source files are added here before prompt v1
+  interfaces:
+    - "unchanged unless the defect is in a public signature; then the OpenAPI export is updated in the same task"
+  patterns:
+    - failing test first, then the smallest fix
+    - hypothesis before change
+  references:
+    - "docs/design/2026-10-12-system-design.md#5.5"
+    - "docs/design/2026-10-12-system-design.md#6.2"
+    - "docs/design/2026-10-12-system-design.md#4.2"
+verification:
+  - "<Defect>RegressionTest named after the defect: red on the parent commit, green after, both logs in harness/evidence/T-105/"
+  - "full suite green"

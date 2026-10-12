@@ -1,0 +1,62 @@
+id: T-102
+title: Migration V2 and link expiry on create, redirect, metadata, and stats
+requirement: R-02
+activities: [implement]
+impact: high
+impact_reasons: [schema]
+status: todo
+depends_on: [T-101]
+intent: >
+  Add the optional expiresAt to links through Flyway V2, validate it on create as RFC 3339 with an
+  offset and in the future, answer 410 with no-store on redirect once it passes while keeping the
+  row and its click history, and report expiresAt and expired in metadata and stats. Only the files
+  predicted in the T-101 analysis may change under src/main.
+constraints:
+  - "V2__add_link_expiry.sql is one single-column statement: ALTER TABLE links ADD COLUMN expires_at TIMESTAMP WITH TIME ZONE; nullable so existing rows never expire"
+  - "expiresAt is parsed as RFC 3339 with offset; a zoneless string or a past value is 400 validation-failed with a field error"
+  - "All comparisons use an injected Clock in UTC; the redirect checks lazily and raises LinkExpiredException mapped to 410 link-expired with Cache-Control no-store set by the controller"
+  - "No sweeper, no purge, no deletion; HEAD mirrors the 410; shortener.redirects gains outcome expired"
+  - "LinkResponse and StatsResponse gain expiresAt nullable and expired boolean; docs/reference/openapi.yaml is re-exported so OpenApiIT stays green"
+  - "Main-source changes stay inside the Predicted files list of harness/reviews/T-101-impact-analysis.md (HC-12)"
+acceptance_criteria:
+  - "WHEN a link is created with expiresAt as an RFC 3339 timestamp with offset THE SYSTEM SHALL store it and return it in the link body [FR-13]"
+  - "IF expiresAt is in the past or carries no offset THEN THE SYSTEM SHALL respond 400 with a field error [FR-13]"
+  - "WHILE a link's expiresAt is in the past THE SYSTEM SHALL respond 410 with Cache-Control containing no-store on redirect [FR-14]"
+  - "WHILE a link is expired THE SYSTEM SHALL keep the row and its click history and report expired true in metadata and stats [FR-14]"
+  - "WHEN Flyway runs against a V1 database THE SYSTEM SHALL apply V2 and pass ddl-auto=validate [NFR-10]"
+  - "WHILE a link has no expiresAt THE SYSTEM SHALL behave exactly as before this task [FR-14]"
+technical_context:
+  files:
+    - url-shortener/src/main/resources/db/migration/V2__add_link_expiry.sql
+    - domain/Link.java
+    - domain/LinkExpiredException.java
+    - api/dto/CreateLinkRequest.java
+    - api/dto/LinkResponse.java
+    - api/dto/StatsResponse.java
+    - api/LinkController.java
+    - api/RedirectController.java
+    - api/ApiExceptionHandler.java
+    - api/ProblemTypes.java
+    - service/LinkService.java
+    - service/LinkAllocator.java
+    - service/AnalyticsService.java
+    - docs/reference/openapi.yaml
+  interfaces:
+    - "LinkAllocator.insert(String code, String url, Instant expiresAt) -> Link"
+    - "LinkService.resolve(String code) -> Link, throws LinkExpiredException"
+    - "Clock bean injected wherever now is compared"
+  patterns:
+    - single-column ALTER in the SQL intersection
+    - lazy expiry check, rows retained
+    - fixed clock in tests
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.5"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#3.13"
+    - "docs/design/2026-10-12-system-design.md#6.2"
+  impact_analysis: harness/reviews/T-101-impact-analysis.md
+verification:
+  - ExpiryIT.rejectsPastAndZoneless
+  - ExpiryIT.expiredLinkIs410AndStatsRemain
+  - MigrationTest
+  - OpenApiIT.committedSpecMatchesRuntime

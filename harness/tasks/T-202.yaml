@@ -1,0 +1,53 @@
+id: T-202
+title: Implement the attribution slice decided in T-201, with a V3 migration only if decided
+requirement: R-03
+activities: [implement]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-201, T-102]
+intent: >
+  Build exactly the slice the R-03 decision describes, nothing wider. The acceptance criteria below
+  are placeholders bound to the decision and are replaced by the EARS criteria written in T-201
+  before prompt v1 is committed. Depends on T-102 so any V3 migration follows V2 and the stats
+  response already carries the expiry fields.
+constraints:
+  - "Replace the acceptance criteria and the files list with the ones from the R-03 decision before prompt v1; re-classify to high with reason schema if V3 is added"
+  - "A V3 migration, if any, is one ALTER TABLE ... ADD COLUMN statement per column in the SQL both H2 PostgreSQL mode and PostgreSQL accept"
+  - "Any attribution value is read on the request thread into the immutable ClickRecorded event; nothing from HttpServletRequest is touched on the executor thread"
+  - "No IP address or raw user-agent string is persisted unless T-201 recorded an ADR amending 0006; derived values are low-cardinality"
+  - "The redirect path stays one indexed read plus a queue offer; stats stay one aggregate query per link unless the decision says otherwise"
+  - "docs/reference/openapi.yaml is re-exported so OpenApiIT stays green; no new dependencies without a dependency sign-off"
+acceptance_criteria:
+  - "IF T-201 decided an attribution dimension THEN THE SYSTEM SHALL capture it on the request thread and hand it off inside the immutable event [FR-15]"
+  - "IF T-201 decided a stats breakdown THEN THE SYSTEM SHALL return it from the decided surface over the decided time window [FR-15]"
+  - "WHILE attribution is recorded THE SYSTEM SHALL persist no IP address and no raw user-agent string unless an ADR amending 0006 exists [NFR-06]"
+  - "IF event persistence fails or the queue is full THEN THE SYSTEM SHALL still return the redirect status and count the drop [NFR-03]"
+  - "IF a V3 migration is added THEN THE SYSTEM SHALL apply it after V2 and pass ddl-auto=validate [NFR-10]"
+technical_context:
+  files:
+    - domain/ClickRecorded.java
+    - domain/ClickEvent.java
+    - api/RedirectController.java
+    - api/dto/StatsResponse.java
+    - service/ClickRecorder.java
+    - service/AnalyticsService.java
+    - repository/ClickEventRepository.java
+    - docs/reference/openapi.yaml
+    # add url-shortener/src/main/resources/db/migration/V3__<slug>.sql only if T-201 decides a schema change
+  interfaces:
+    - "to be fixed by the R-03 decision; candidates: ClickRecorded gains one field, ClickEventRepository gains one grouped query"
+  patterns:
+    - immutable event on the request thread
+    - single-column ALTER statements
+    - derived, non-identifying values only
+  references:
+    - "docs/design/2026-10-12-system-design.md#6.3"
+    - "docs/design/2026-10-12-system-design.md#3.5"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "harness/requirements/R-03.md"
+verification:
+  - "tests named in the R-03 decision section"
+  - MigrationTest
+  - ClickEventTest
+  - OpenApiIT.committedSpecMatchesRuntime

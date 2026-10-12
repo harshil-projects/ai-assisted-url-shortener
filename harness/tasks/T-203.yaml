@@ -1,0 +1,46 @@
+id: T-203
+title: Tests, documentation, and decision record for the attribution slice
+requirement: R-03
+activities: [test-gen, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-202]
+intent: >
+  Prove and document what T-202 built: tests for every criterion in the R-03 decision with an
+  edge-case table, the API reference and changelog, the README example, the decision record if
+  T-201 called for one, and the ambiguous scenario document completed with evidence links and
+  validation.
+constraints:
+  - "Tests are added for each EARS criterion in the R-03 decision; existing tests are not modified (SAI-06)"
+  - "Edge cases at least: value absent, value malformed or oversized, value present on an expired link, breakdown for a link with no clicks"
+  - "Documentation is derived from code and tests: docs/reference/api.md, CHANGELOG.md, README; no feature is described that the tests do not prove"
+  - "IF T-201 amended the privacy posture THEN the ADR exists under docs/decisions/ and ADR 0006 links to it"
+  - "docs/scenarios/ambiguous.md shows normalization, decomposition, execution evidence links, and validation, written in that order"
+acceptance_criteria:
+  - "WHEN the suite runs THE SYSTEM SHALL pass a test for every criterion in the R-03 decision with coverage not lower than before T-202 [NFR-09]"
+  - "WHEN docs/reference/api.md is compared with the runtime THE REFERENCE SHALL describe the attribution fields or breakdown exactly as served [FR-15]"
+  - "IF T-201 amended the privacy posture THEN THE DECISION RECORDS SHALL contain the amending ADR [FR-15]"
+  - "WHEN docs/scenarios/ambiguous.md is read THE DOCUMENT SHALL show questions before answers, the decision, the tasks, evidence links that resolve, and validation results [NFR-11]"
+technical_context:
+  files:
+    - url-shortener/src/test/java/dev/harshil/shortener/
+    - docs/reference/api.md
+    - CHANGELOG.md
+    - README.md
+    - docs/scenarios/ambiguous.md
+    - docs/decisions/
+  interfaces:
+    - "fixed Clock bean under the test profile"
+  patterns:
+    - edge-case table from the test-gen playbook
+    - documentation derived from code and tests
+  references:
+    - "docs/design/2026-10-12-system-design.md#6.3"
+    - "docs/design/2026-10-12-system-design.md#4.2"
+    - "docs/design/2026-10-12-system-design.md#2.5"
+    - "harness/requirements/R-03.md"
+verification:
+  - "tests named in the R-03 decision section"
+  - "coverage gate green with figures not lower than before T-202"
+  - "docs/scenarios/ambiguous.md complete and every evidence link resolves"

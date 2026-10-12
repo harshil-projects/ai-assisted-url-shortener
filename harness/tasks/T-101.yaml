@@ -1,0 +1,42 @@
+id: T-101
+title: Impact analysis for link expiry, engineer-authored, with predicted file list
+requirement: R-02
+activities: [review-prep, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-010]
+intent: >
+  Reason about the existing codebase before changing it: the modules, endpoints, schema, data flows,
+  and tests that expiry touches, the blast radius, a rollback plan, and the top smell found. The
+  engineer writes it; AI may only check it for omissions. The predicted file list is committed
+  before any change so HC-12 can compare it with what T-102 actually touched.
+constraints:
+  - "The engineer writes the analysis first; the prompt asks only for omissions and must not propose code"
+  - "The document has a heading named Predicted files with one bullet per main-source path, repository-relative, bare or in backticks, because HC-12 parses that heading"
+  - "Rollback plan covers V2: Flyway has no down migration, so state the forward fix and why a nullable column is safe to leave"
+  - "The top smell is named with its file, the measurable symptom, and the measurement, so T-104 can report the improvement"
+  - "Committed before T-102 prompt v1 is written; the ledger entry for this task records the omission check as the only AI contribution"
+acceptance_criteria:
+  - "WHEN the analysis is committed THE ANALYSIS SHALL list the predicted main-source files under a Predicted files heading [FR-13]"
+  - "WHEN the analysis is read THE ANALYSIS SHALL name the modules, endpoints, schema change, data flows, tests touched, blast radius, rollback plan, and top smell with a measured symptom [FR-14]"
+  - "WHEN T-102 commits exist THE SYSTEM SHALL report through HC-12 any main-source file changed but not predicted [NFR-11]"
+  - "IF the omission check proposes a file not in the engineer's list THEN THE ANALYSIS SHALL record whether it was added and why [NFR-11]"
+technical_context:
+  files:
+    - harness/reviews/T-101-impact-analysis.md
+    - docs/scenarios/brownfield.md
+  interfaces:
+    - "Predicted files heading parsed by harness-check ImpactAnalysis"
+  patterns:
+    - engineer reasons first, AI checks for omissions
+    - predicted versus actual blast radius
+  references:
+    - "docs/design/2026-10-12-system-design.md#6.2"
+    - "docs/design/2026-10-12-system-design.md#5.8"
+    - "docs/design/2026-10-12-system-design.md#3.5"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+  impact_analysis: harness/reviews/T-101-impact-analysis.md
+verification:
+  - "engineer checklist: every section of harness/reviews/T-101-impact-analysis.md filled before T-102 prompt v1 is committed"
+  - "harness-check HC-12 over T-102 commits, which runs when .git and the baseline tag exist"

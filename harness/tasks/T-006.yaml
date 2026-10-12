@@ -1,0 +1,51 @@
+id: T-006
+title: Link metadata, single-query stats, and delete
+requirement: R-01
+activities: [implement]
+impact: high
+impact_reasons: [data-deletion]
+status: todo
+depends_on: [T-005]
+intent: >
+  Complete the management API: GET metadata, GET stats computed by one aggregate query over the
+  click index, and DELETE that removes the link and its events through the database cascade.
+  Delete is a hard delete, which is why this task carries a sign-off.
+constraints:
+  - "Stats is one JPQL query per link: count, sum(case when occurredAt >= :d1), sum(case when occurredAt >= :d7), max(occurredAt) into a record projection, inside @Transactional(readOnly = true)"
+  - "Delete is @Transactional on the service method; the database cascade removes click events; the response is 204"
+  - "Hard delete; the alias-reclaim risk RK-12 is recorded in the ledger rationale, not fixed here"
+  - "Unknown code on any of the three endpoints is 404 link-not-found through the shared handler"
+  - "StatsResponse and LinkResponse are records with the fields in section 3.3; no attribution fields"
+  - "No new dependencies; no change to the redirect path"
+acceptance_criteria:
+  - "WHEN a client GETs /api/v1/links/{code}/stats THE SYSTEM SHALL return total clicks, clicks in the last 24 hours, clicks in the last 7 days, and last-clicked time [FR-08]"
+  - "WHEN a client GETs /api/v1/links/{code} THE SYSTEM SHALL return the link metadata as LinkResponse [FR-09]"
+  - "WHEN a client DELETEs /api/v1/links/{code} THE SYSTEM SHALL delete the link and its click events and respond 204 [FR-09]"
+  - "IF the code is unknown THEN THE SYSTEM SHALL respond 404 link-not-found on metadata, stats, and delete [FR-09]"
+  - "WHEN stats are computed THE SYSTEM SHALL issue one aggregate query over the (link_id, occurred_at) index [NFR-02]"
+technical_context:
+  files:
+    - api/LinkController.java
+    - api/StatsController.java
+    - api/dto/LinkResponse.java
+    - api/dto/StatsResponse.java
+    - service/LinkService.java
+    - service/AnalyticsService.java
+    - repository/ClickEventRepository.java
+  interfaces:
+    - "AnalyticsService.stats(String code) -> StatsResponse"
+    - "LinkService.get(String code) -> Link"
+    - "LinkService.delete(String code)"
+    - "ClickEventRepository.summarize(Long linkId, Instant since24h, Instant since7d) -> ClickSummary"
+  patterns:
+    - single aggregate query with a record projection
+    - cascade in the database, not in the entity graph
+  references:
+    - "docs/design/2026-10-12-system-design.md#3.3"
+    - "docs/design/2026-10-12-system-design.md#3.6"
+    - "docs/design/2026-10-12-system-design.md#5.6"
+    - "docs/design/2026-10-12-system-design.md#8"
+verification:
+  - StatsIT.returnsCounts
+  - LinkManagementIT
+  - ClickEventRepositoryTest

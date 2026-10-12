@@ -1,0 +1,45 @@
+id: T-201
+title: Normalize the attribution requirement with dated questions, dated answers, and a scoped decision
+requirement: R-03
+activities: [review-prep, document]
+impact: normal
+impact_reasons: []
+status: todo
+depends_on: [T-010]
+intent: >
+  Turn "marketing wants to know where clicks come from" into a requirement that can be built and
+  tested. Record the answers to the three questions already dated in R-03, weigh the candidate
+  directions with their cost and privacy implications, decide the slice, and write the normalized
+  EARS criteria and test names that T-202 implements. No code is written in this task.
+constraints:
+  - "Every answer carries its own timestamp later than the question it answers; the engineer plays the stakeholder and the record says so"
+  - "Candidates weighed, without preference beforehand: referring site, campaign parameters on the destination, geography from IP, device or browser family, time-of-day; each states storage need, privacy position against ADR 0006, and cost"
+  - "At least one answer removes scope; the record names what was removed"
+  - "IF the decision stores any value derived from IP or user agent THEN a new ADR amending 0006 is written before T-202 starts"
+  - "The decision yields EARS criteria with FR-15 sub-ids and test names, copied into harness/tasks/T-202.yaml; T-202 impact is set to high with reason schema if a V3 migration is needed"
+  - "AI may list options and check the record for omissions; it does not decide"
+acceptance_criteria:
+  - "WHEN harness/requirements/R-03.md is read THE RECORD SHALL show every question timestamped earlier than its answer [FR-15]"
+  - "WHEN the decision is recorded THE RECORD SHALL state the chosen dimension, the consumption surface, the time window, the storage change if any, and each rejected candidate with its reason [FR-15]"
+  - "WHEN the decision is recorded THE RECORD SHALL show at least one answer that removed scope [FR-15]"
+  - "IF the decision needs a schema change THEN THE SYSTEM SHALL carry T-202 as impact high with reason schema before its prompt v1 [NFR-10]"
+  - "WHEN T-202.yaml is updated THE SYSTEM SHALL pass HC-01 and HC-02 over the task set [NFR-11]"
+technical_context:
+  files:
+    - harness/requirements/R-03.md
+    - harness/tasks/T-202.yaml
+    - docs/scenarios/ambiguous.md
+    - docs/decisions/
+  interfaces:
+    - "R-03 sections: Stakeholder clarification log, Ambiguities identified and reading adopted, Normalized problem statement"
+  patterns:
+    - questions dated before answers
+    - options listed by AI, decided by the engineer
+  references:
+    - "docs/design/2026-10-12-system-design.md#6.3"
+    - "docs/design/2026-10-12-system-design.md#1.4"
+    - "docs/design/2026-10-12-system-design.md#1.5"
+    - "docs/decisions/0006-no-ip-or-user-agent-persisted.md"
+verification:
+  - "engineer checklist over harness/requirements/R-03.md: answers dated after questions, decision filled, T-202 criteria written"
+  - "harness-check HC-01 and HC-02 pass after harness/tasks/T-202.yaml is updated"

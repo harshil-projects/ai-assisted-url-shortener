@@ -1,0 +1,64 @@
+id: T-000
+title: Toolchain proof and harness skeleton
+requirement: R-01
+activities: [implement, document]
+impact: high
+impact_reasons: [dependency]
+status: in-progress
+depends_on: []
+intent: >
+  Prove the build toolchain on this machine and commit the process skeleton before the first
+  product task, so every later change has a spec, a prompt, a snapshot, a gate, and a check to
+  land in. Part A is the root and service poms with the final plugin set, a hello controller with
+  one test, README, ignore files, the private repository, and the CI skeleton. Part B is the
+  instruction files, policy, playbooks, templates, scripts, the minimal harness-check rules, and
+  the baseline tag.
+constraints:
+  - "Every Maven coordinate is verified on Maven Central and the URL is recorded in the ledger (SAI-05)"
+  - "Versions come from the Boot 4.1.1 BOM; pin only what the BOM does not manage, with the versions in section 2.2"
+  - "Commit messages carry a Task trailer and no AI tool or model names (ADR 0009)"
+  - "AGENTS.md stays under 150 lines; the assistant instruction file imports it; the portable file under .github points to it"
+  - "The assistant settings file carries the deny rules and env from SAI-02 and SAI-03 and no hooks"
+  - "harness-check implements HC-01, HC-03, HC-04, HC-06, HC-08, HC-11 and the report before the baseline tag"
+acceptance_criteria:
+  - "WHEN mvnw verify runs on a clean clone with JDK 21 THE SYSTEM SHALL build green including the hello controller test [NFR-01]"
+  - "IF JAVA_HOME points at a JDK outside [21,27) THEN THE SYSTEM SHALL fail at validate with the enforcer message [NFR-01]"
+  - "WHEN the CI skeleton runs THE SYSTEM SHALL pass the verify job on windows-latest and ubuntu-latest [NFR-01]"
+  - "WHEN the harness skeleton is committed THE SYSTEM SHALL run HC-01, HC-03, HC-04, HC-06, HC-08, HC-11 inside mvnw verify [NFR-11]"
+  - "WHEN a commit lacks the Task trailer THE SYSTEM SHALL reject it through scripts/hooks/commit-msg [NFR-11]"
+technical_context:
+  files:
+    - pom.xml
+    - url-shortener/pom.xml
+    - harness-check/pom.xml
+    - UrlShortenerApplication.java
+    - url-shortener/src/main/resources/application.properties
+    - README.md
+    - .gitignore
+    - .gitattributes
+    - .github/workflows/ci.yml
+    - AGENTS.md
+    - harness/policy/secure-ai-usage.md
+    - harness/playbooks/
+    - harness/templates/
+    - scripts/
+    - harness-check/src/
+  interfaces:
+    - "scripts/snap.ps1 T-NNN"
+    - "scripts/gate.ps1 T-NNN [-Perf]"
+    - "scripts/report.ps1"
+  patterns:
+    - process as code
+    - enforced where possible, attested where not
+  references:
+    - "docs/design/2026-10-12-system-design.md#2.2"
+    - "docs/design/2026-10-12-system-design.md#4.1"
+    - "docs/design/2026-10-12-system-design.md#5.2"
+    - "docs/design/2026-10-12-system-design.md#5.9"
+    - "docs/design/2026-10-12-system-design.md#7"
+verification:
+  - UrlShortenerApplicationTest
+  - TaskSpecRulesTest
+  - LedgerRulesTest
+  - TraceabilityReportTest
+  - "mvnw verify green locally and on both CI runners"
