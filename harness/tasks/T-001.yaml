@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement]
 impact: high
 impact_reasons: [dependency]
-status: todo
+status: done
 depends_on: [T-000]
 intent: >
   Wire every default quality gate into mvnw verify on the hello-world app so the gates exist before

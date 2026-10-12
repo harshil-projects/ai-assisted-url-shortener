@@ -13,6 +13,10 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # The Maven wrapper version is a deliberate pin (ADR 0001, enforcer range [3.9,4));
+      # it is revisited with the design, not on the weekly cadence.
+      - dependency-name: "org.apache.maven:apache-maven"
 
   - package-ecosystem: github-actions
     directory: "/"
