@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import dev.harshil.shortener.config.SecurityConfig;
 import dev.harshil.shortener.domain.ClickRecorded;
 import dev.harshil.shortener.domain.Link;
+import dev.harshil.shortener.domain.LinkExpiredException;
 import dev.harshil.shortener.domain.LinkNotFoundException;
 import dev.harshil.shortener.service.LinkService;
 import dev.harshil.shortener.support.TestProfile;
@@ -51,7 +52,7 @@ class RedirectControllerTest {
 
   @BeforeEach
   void stubKnownLink() {
-    Link link = new Link("abcdefg", TARGET, NOW.minusSeconds(3600));
+    Link link = new Link("abcdefg", TARGET, NOW.minusSeconds(3600), null);
     ReflectionTestUtils.setField(link, "id", 42L);
     when(linkService.resolve("abcdefg")).thenReturn(link);
     when(linkService.resolve("missing")).thenThrow(new LinkNotFoundException("missing"));
@@ -115,12 +116,49 @@ class RedirectControllerTest {
     assertThat(mvc.get().uri("/abcdefg")).hasStatus(HttpStatus.FOUND);
   }
 
+  @Test
+  void get_expiredCode_returns410LinkExpiredWithNoStoreCountsExpiredAndPublishesNothing() {
+    when(linkService.resolve("expired"))
+        .thenThrow(new LinkExpiredException("expired", NOW.minusSeconds(60)));
+    double expiredBefore = expired();
+    double hitsBefore = hits();
+
+    assertThat(mvc.get().uri("/expired"))
+        .hasStatus(HttpStatus.GONE)
+        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store")
+        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
+        .bodyJson()
+        .hasPathSatisfying("$.type", type -> type.assertThat().isEqualTo("/problems/link-expired"))
+        .hasPathSatisfying("$.title", title -> title.assertThat().isEqualTo("Link has expired"))
+        .hasPathSatisfying("$.status", status -> status.assertThat().isEqualTo(410));
+
+    assertThat(clicks.events()).isEmpty();
+    assertThat(expired()).isEqualTo(expiredBefore + 1);
+    assertThat(hits()).isEqualTo(hitsBefore);
+  }
+
+  @Test
+  void head_expiredCode_returns410WithNoStoreAndPublishesNothing() {
+    when(linkService.resolve("expired"))
+        .thenThrow(new LinkExpiredException("expired", NOW.minusSeconds(60)));
+
+    assertThat(mvc.head().uri("/expired"))
+        .hasStatus(HttpStatus.GONE)
+        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+
+    assertThat(clicks.events()).isEmpty();
+  }
+
   private double hits() {
     return registry.counter("shortener.redirects", "outcome", "hit").count();
   }
 
   private double misses() {
     return registry.counter("shortener.redirects", "outcome", "miss").count();
+  }
+
+  private double expired() {
+    return registry.counter("shortener.redirects", "outcome", "expired").count();
   }
 
   /** Captures published click events synchronously so the test can assert on them. */

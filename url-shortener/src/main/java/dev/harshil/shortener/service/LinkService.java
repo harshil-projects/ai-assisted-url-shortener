@@ -4,6 +4,7 @@ import dev.harshil.shortener.api.dto.CreateLinkRequest;
 import dev.harshil.shortener.domain.AliasTakenException;
 import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
 import dev.harshil.shortener.domain.Link;
+import dev.harshil.shortener.domain.LinkExpiredException;
 import dev.harshil.shortener.domain.LinkNotFoundException;
 import dev.harshil.shortener.domain.LogSanitizer;
 import dev.harshil.shortener.domain.ReservedWords;
@@ -40,6 +41,8 @@ public class LinkService {
   static final String MSG_ALIAS_RESERVED = "Alias is reserved";
   static final String MSG_ALIAS_SHAPE =
       "Alias must be 4 to 32 characters of letters, digits, underscore or hyphen";
+  static final String EXPIRES_AT_FIELD = "expiresAt";
+  static final String MSG_EXPIRES_AT_PAST = "expiresAt must be in the future";
   static final String LINKS_CREATED_METRIC = "shortener.links.created";
 
   private static final Logger log = LoggerFactory.getLogger(LinkService.class);
@@ -81,19 +84,22 @@ public class LinkService {
   /**
    * Validates the request and stores a new link.
    *
-   * @param request the client's URL and optional alias, already past Bean Validation
+   * @param request the client's URL, optional alias and optional expiry, already past Bean
+   *     Validation
    * @return the stored link
-   * @throws UrlValidationException when the URL breaks a rule or the alias is reserved
+   * @throws UrlValidationException when the URL breaks a rule, the alias is reserved, or the expiry
+   *     is not in the future
    * @throws AliasTakenException when the alias is already a stored code
    * @throws CodeGenerationExhaustedException when {@value #MAX_ATTEMPTS} random codes collided
    */
   public Link create(CreateLinkRequest request) {
     String url = urlValidator.validate(request.url());
     Instant now = clock.instant();
+    Instant expiresAt = requireFuture(request.expiresAt(), now);
     Link link =
         request.hasCustomAlias()
-            ? allocateAlias(request.customAlias(), url, now)
-            : allocateRandom(url, now);
+            ? allocateAlias(request.customAlias(), url, now, expiresAt)
+            : allocateRandom(url, now, expiresAt);
     linksCreated.increment();
     log.info(
         "Created link code={} host={}",
@@ -103,27 +109,33 @@ public class LinkService {
   }
 
   /**
-   * Finds the link a redirect should follow.
+   * Finds the link a redirect should follow. Expiry is checked lazily here, against the same clock
+   * that validated it at create time, so a link stops redirecting the moment its {@code expiresAt}
+   * passes while its row and click history stay (design 3.6).
    *
    * @param code the code from the path
    * @return the link
    * @throws LinkNotFoundException when no link has that code
+   * @throws LinkExpiredException when the link exists but its expiry has passed
    */
   public Link resolve(String code) {
-    return links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
+    Link link = get(code);
+    if (link.isExpired(clock.instant())) {
+      throw new LinkExpiredException(code, link.getExpiresAt());
+    }
+    return link;
   }
 
   /**
-   * Finds a link for the management API. Today this is the same lookup as {@link #resolve}; the two
-   * names exist so the redirect path can later diverge (for example, to report expiry) without
-   * changing how metadata is read.
+   * Finds a link for the management API. Unlike {@link #resolve}, an expired link is returned, so
+   * its metadata and statistics remain readable and report the expiry.
    *
    * @param code the code from the path
    * @return the link
    * @throws LinkNotFoundException when no link has that code
    */
   public Link get(String code) {
-    return resolve(code);
+    return links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
   }
 
   /**
@@ -139,7 +151,18 @@ public class LinkService {
     }
   }
 
-  private Link allocateAlias(String alias, String url, Instant now) {
+  /**
+   * An expiry must lie strictly after now; "expired" means {@code expiresAt <= now} (see {@link
+   * Link#isExpired}), so a value equal to now would be born expired and is rejected.
+   */
+  private static Instant requireFuture(Instant expiresAt, Instant now) {
+    if (expiresAt != null && !expiresAt.isAfter(now)) {
+      throw UrlValidationException.of(EXPIRES_AT_FIELD, MSG_EXPIRES_AT_PAST);
+    }
+    return expiresAt;
+  }
+
+  private Link allocateAlias(String alias, String url, Instant now, Instant expiresAt) {
     if (!ALIAS.matcher(alias).matches()) {
       throw UrlValidationException.of(ALIAS_FIELD, MSG_ALIAS_SHAPE);
     }
@@ -150,7 +173,7 @@ public class LinkService {
       throw new AliasTakenException(alias);
     }
     try {
-      return allocator.insert(alias, url, now);
+      return allocator.insert(alias, url, now, expiresAt);
     } catch (DataIntegrityViolationException e) {
       if (isCodeCollision(e)) {
         throw new AliasTakenException(alias, e);
@@ -159,11 +182,11 @@ public class LinkService {
     }
   }
 
-  private Link allocateRandom(String url, Instant now) {
+  private Link allocateRandom(String url, Instant now, Instant expiresAt) {
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       String code = generator.next();
       try {
-        return allocator.insert(code, url, now);
+        return allocator.insert(code, url, now, expiresAt);
       } catch (DataIntegrityViolationException e) {
         if (!isCodeCollision(e)) {
           throw e;

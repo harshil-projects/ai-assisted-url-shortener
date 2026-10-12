@@ -88,7 +88,7 @@ class LinkManagementIT {
             .uri(LINKS)
             .header(API_KEY_HEADER, API_KEY)
             .contentType(MediaType.APPLICATION_JSON)
-            .body(new CreateLinkRequest(url, null))
+            .body(new CreateLinkRequest(url, null, null))
             .exchange()
             .expectStatus()
             .isCreated()

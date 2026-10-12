@@ -465,6 +465,180 @@ entries:
     reviewer: Harshil
     started_at: 2026-10-12T04:25:00Z
     finished_at: 2026-10-12T04:40:00Z
+  - task: T-102
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-102/v1.md
+    raw_output: harness/evidence/T-102/ai-raw.patch
+    files:
+      - { path: docs/reference/openapi.yaml, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java, status: edited }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/LinkExpiredException.java, status: generated }
+      - { path: url-shortener/src/main/resources/db/migration/V2__add_link_expiry.sql, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ExpiryIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/support/MutableClock.java, status: generated }
+    rationale: >
+      Engineer-asserted. Drafted in a worktree session from prompt v1 against the T-101 impact analysis;
+      every main-source change is inside the predicted file list (HC-12). Kept as drafted except the three
+      files the engineer merged with the parallel attribution slice (StatsResponse, AnalyticsService,
+      RedirectController Javadoc) and the application test's latest-migration constant. Review artifact
+      harness/reviews/T-102.md.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "Jackson 3 parses a zoneless timestamp into Instant with a default offset", finding: "refuted. Parsing fails and surfaces as the existing unreadable-body 400 with errors: [], so the field-level error promised in R-02 is not reachable for that case", fix: "accepted and documented in api.md; past values do get the expiresAt field error" }
+      - { hypothesis: "one shared in-memory database is fine for cached test contexts", finding: "a transient ClickRecordingIT context failure under load: Hikari timed out while a previous context's recorder was still writing", fix: "per-context database name in the test profile (recorded under T-009)" }
+    reviewer: Harshil
+    started_at: 2026-10-12T03:45:00Z
+    finished_at: 2026-10-12T04:35:00Z
+  - task: T-103
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-102/v1.md
+      - harness/prompts/T-103/v1.md
+    raw_output: harness/evidence/T-102/ai-raw.patch
+    files:
+      - { path: docs/reference/api.md, status: edited }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/ExpiryEdgeCasesTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Edge-case table fixing the boundary as expired when expiresAt <= now, plus the
+      api.md and changelog updates from the same session; the api.md merge with the attribution section
+      was done by the engineer. Coverage before T-102 97.62 percent lines and 93.75 percent branches;
+      after T-103 97.73 and 94.12 (bundle, from jacoco.csv in the drafting session).
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T04:10:00Z
+    finished_at: 2026-10-12T04:35:00Z
+  - task: T-104
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-102/v1.md
+      - harness/prompts/T-104/v1.md
+    raw_output: harness/evidence/T-102/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ProblemResponses.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java, status: generated }
+    rationale: >
+      Engineer-asserted. Smell 1 from the impact analysis: ApiExceptionHandler went from 324 lines (after
+      the 410 mapping) to 279 by moving six methods into the package-private ProblemResponses helper (93
+      lines); no test file changed, the OpenAPI export is byte-identical, SpotBugs stays at zero. Kept as
+      drafted.
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T04:20:00Z
+    finished_at: 2026-10-12T04:35:00Z
+  - task: T-202
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-202/v1.md
+    raw_output: harness/evidence/T-202/ai-raw.patch
+    files:
+      - { path: docs/reference/openapi.yaml, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java, status: edited }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/CampaignStats.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/ReferrerStats.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ClickAttribution.java, status: generated }
+      - { path: url-shortener/src/main/resources/db/migration/V3__add_click_attribution.sql, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/AttributionIT.java, status: edited }
+    rationale: >
+      Engineer-asserted. Drafted in a worktree session from prompt v1 and the R-03 decision; kept as drafted
+      except the files merged with the parallel expiry change (StatsResponse, AnalyticsService,
+      RedirectController) and constructor arguments in AttributionIT after Link gained expiresAt. The
+      seven-column assertion on click_events proves the privacy position. Review artifact
+      harness/reviews/T-202.md.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "Checkstyle accepts default-method wrappers anywhere in the repository interface", finding: "refuted. OverloadMethodsDeclarationOrder requires the overloads to sit together", fix: "wrappers moved next to the @Query methods" }
+      - { hypothesis: "a Unicode escape is fine in the edge-case table", finding: "refuted by AvoidEscapedUnicodeCharacters", fix: "Character.toString(code point) with a tail comment" }
+    reviewer: Harshil
+    started_at: 2026-10-12T03:45:00Z
+    finished_at: 2026-10-12T04:40:00Z
+  - task: T-203
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-202/v1.md
+      - harness/prompts/T-203/v1.md
+    raw_output: harness/evidence/T-202/ai-raw.patch
+    files:
+      - { path: docs/reference/api.md, status: edited }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/ClickAttributionTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Edge-case table for ClickAttribution.from and the attribution section of api.md;
+      the changelog entries were merged by hand with the expiry entries. The ambiguous scenario document
+      is written by the engineer.
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T04:20:00Z
+    finished_at: 2026-10-12T04:40:00Z
+  - task: T-009
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-009/v1.md
+    raw_output: harness/evidence/T-009/ai-raw.patch
+    files:
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/perf/RedirectLatencySmokeTest.java, status: edited }
+      - { path: docs/scenarios/greenfield.md, status: generated }
+      - { path: docs/fresh-clone-transcript.md, status: generated }
+      - { path: url-shortener/src/test/resources/application-test.properties, status: edited }
+    rationale: >
+      Engineer-asserted. Perf smoke test (p50 8.34 ms, p95 44.63 ms, p99 119.47 ms, max 420.48 ms over
+      2,000 redirects on a loaded machine; a smoke threshold, not a capacity claim), the greenfield
+      scenario document and the timed fresh-clone transcript were drafted in a worktree session and kept;
+      the engineer edited the perf test's constructor call after CreateLinkRequest gained expiresAt and
+      added the per-context test database name that removes an interaction between cached contexts.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "the random-port tests are isolated from each other", finding: "refuted. Spring caches contexts; a shared in-memory database let a cached context's asynchronous click recorder write while the next context ran Flyway (RateLimitIT context failure under load)", fix: "jdbc:h2:mem:urlshortener-${random.uuid} in the test profile" }
+    reviewer: Harshil
+    started_at: 2026-10-12T03:45:00Z
+    finished_at: 2026-10-12T04:40:00Z
 gates:
   - task: T-000
     commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
@@ -727,7 +901,6 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-003/verify-2.log
-signoffs:
   - task: T-000
     reasons: [dependency]
     review: harness/reviews/T-000.md
@@ -777,3 +950,19 @@ signoffs:
     statement: >
       Hard delete scoped to one link and its events behind the API key; irreversibility and alias
       reclaim recorded as accepted limitations.
+  - task: T-102
+    reasons: [schema]
+    review: harness/reviews/T-102.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T04:42:00Z
+    statement: >
+      Migration V2 and the expiry behaviour reviewed against design sections 3.3 to 3.6 and the T-101
+      impact analysis; every main-source change inside the predicted list.
+  - task: T-202
+    reasons: [schema]
+    review: harness/reviews/T-202.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T04:47:00Z
+    statement: >
+      Migration V3 and the attribution slice reviewed against the R-03 decision and ADR 0006; the
+      seven-column shape of click_events asserted by a test.

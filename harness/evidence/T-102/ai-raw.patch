@@ -1,0 +1,2401 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c3f7203..401dfe8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,8 +8,16 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
+ 
+ ### Added
+ 
++- Optional link expiry: `POST /api/v1/links` accepts `expiresAt` as an RFC 3339 timestamp with an offset; a value at or before now is a 400 field error, a zoneless string is the generic 400 for an unreadable body. Flyway migration `V2__add_link_expiry.sql` adds the nullable `links.expires_at` column; existing rows never expire.
++- `GET` and `HEAD /{code}` answer 410 `/problems/link-expired` with `Cache-Control: no-store` once `expiresAt` has passed; no click is recorded and the redirect counter gains `outcome=expired`. The row and its click history are kept.
++- `expiresAt` (nullable) and `expired` (boolean, computed when the response is built) on `LinkResponse` and `StatsResponse`; metadata and statistics of an expired link stay readable with unchanged counts.
++- Expiry regression suite: `ExpiryIT` with a controllable clock, `ExpiryEdgeCasesTest` fixing the boundary as "expired when `expiresAt <= now`", and `MigrationTest.v2AddsNullableExpiresAt`.
++
+ ### Changed
+ 
++- `LinkAllocator.insert(code, url, now)` became `insert(code, url, now, expiresAt)`; `Link` and `CreateLinkRequest` gained the `expiresAt` component.
++- `ApiExceptionHandler` keeps only the exception-to-problem mapping; body construction and the standardisation of framework-produced bodies moved to the package-private `ProblemResponses` helper. No change in behaviour or in the OpenAPI export.
++
+ ### Fixed
+ 
+ ## [0.1.0] - 2026-10-12
+diff --git a/docs/reference/api.md b/docs/reference/api.md
+index 7573d1e..a3b50b6 100644
+--- a/docs/reference/api.md
++++ b/docs/reference/api.md
+@@ -28,18 +28,20 @@ Request rules for create:
+ |---|---|
+ | `url` | Absolute, scheme `http` or `https`, non-empty host, no user info, at most 2048 characters; host must not be loopback, RFC 1918, link-local, `0.0.0.0/8`, multicast, `::1`, `fc00::/7`, `fe80::/10`, `169.254.169.254`, `localhost`, or `metadata.google.internal`; scheme and host are lowercased; no DNS resolution |
+ | `customAlias` | Optional; `^[A-Za-z0-9_-]{4,32}$`, case-sensitive; must not be in the reserved list (`api`, `actuator`, `health`, `metrics`, `prometheus`, `swagger-ui`, `v3`, `api-docs`, `error`, `favicon.ico`, `robots.txt`, `.well-known`, `static`, `assets`, `stats`, `admin`, `login`, `h2-console`); numeric shorthand hosts such as `2130706433` or `0x7f000001` are rejected because browsers resolve them to addresses the block list would otherwise miss |
+-| `expiresAt` | Optional; RFC 3339 timestamp with an offset; must be in the future; zoneless strings are rejected |
++| `expiresAt` | Optional; RFC 3339 timestamp with an offset, for example `2026-10-12T16:30:00+05:30`; must be strictly in the future at create time, judged by the service clock in UTC: a value at or before now is a 400 `validation-failed` with `errors[0].field == "expiresAt"` and message `expiresAt must be in the future`; a zoneless string such as `2026-10-13T10:00:00` cannot be parsed into an instant and is the generic 400 `validation-failed` with detail `Request body is missing or is not valid JSON` and an empty `errors` list; absent or `null` means the link never expires |
+ 
+ ## Response records
+ 
+ | Record | Fields |
+ |---|---|
+ | `LinkResponse` | `code`, `shortUrl`, `url`, `createdAt`, `expiresAt` (nullable), `expired` (boolean) |
+-| `StatsResponse` | `code`, `totalClicks`, `clicksLast24h`, `clicksLast7d`, `lastClickedAt`, `expiresAt`, `expired`; any attribution fields only if the ambiguous scenario decides so |
++| `StatsResponse` | `code`, `totalClicks`, `clicksLast24h`, `clicksLast7d`, `lastClickedAt`, `expiresAt` (nullable), `expired` (boolean); any attribution fields only if the ambiguous scenario decides so |
+ | Problem Details | `type`, `title`, `status`, `detail`, `instance`, `requestId`, `timestamp`; `errors[]` with field and message on 400 |
+ 
+ `shortUrl` is built from `app.base-url` when set, otherwise from the current request's scheme, host, and port, so a reviewer on another port sees correct values.
+ 
++`expiresAt` is echoed in UTC (`Z`) whatever offset was supplied, and is `null` for a link that never expires. `expired` is computed when the response is built, as `expiresAt <= now` against the service clock, so the instant itself already counts as expired. Metadata (`GET /api/v1/links/{code}`) and statistics keep answering 200 for an expired link: the row and its click events are kept, so the counts do not change when a link expires; only the redirect refuses it with 410. Deleting an expired link works as for any other and frees its code.
++
+ ## Headers
+ 
+ | Header | On | Value |
+@@ -67,7 +69,7 @@ Type URIs are relative to the service base URL. Every body carries `requestId` a
+ | `/problems/link-not-found` | Link not found | 404 | Unknown code, or a path no controller serves ("No resource at this path") | handler |
+ | `/problems/method-not-allowed` | Method not allowed | 405 | Wrong verb | handler |
+ | `/problems/alias-taken` | Alias already in use | 409 | Custom alias exists, including a lost race on the unique constraint | handler |
+-| `/problems/link-expired` | Link has expired | 410 | `expiresAt` in the past | handler |
++| `/problems/link-expired` | Link has expired | 410 | `GET` or `HEAD /{code}` for a link whose `expiresAt` is at or before now; `Cache-Control: no-store` is set on the response; no click is recorded and `shortener.redirects{outcome=expired}` is incremented; the row and its history stay | handler |
+ | `/problems/payload-too-large` | Request body too large | 413 | Body over 16 KiB on `/api/v1/**` | `RequestSizeFilter` via `ProblemWriter` |
+ | `/problems/unsupported-media-type` | Unsupported media type | 415 | Create without `application/json` | handler |
+ | `/problems/rate-limited` | Too many requests | 429 | Bucket empty; `Retry-After` set | `RateLimitFilter` via `ProblemWriter` |
+diff --git a/docs/reference/openapi.yaml b/docs/reference/openapi.yaml
+index 068bc9e..535cda0 100644
+--- a/docs/reference/openapi.yaml
++++ b/docs/reference/openapi.yaml
+@@ -316,6 +316,17 @@ paths:
+               schema:
+                 $ref: "#/components/schemas/ProblemDetail"
+           description: Link not found
++        "410":
++          content:
++            application/problem+json:
++              schema:
++                $ref: "#/components/schemas/ProblemDetail"
++          description: Link has expired; the row and its click history are kept
++          headers:
++            Cache-Control:
++              description: Always no-store
++              schema:
++                type: string
+         "429":
+           content:
+             application/problem+json:
+@@ -371,6 +382,17 @@ paths:
+               schema:
+                 $ref: "#/components/schemas/ProblemDetail"
+           description: Link not found
++        "410":
++          content:
++            application/problem+json:
++              schema:
++                $ref: "#/components/schemas/ProblemDetail"
++          description: Link has expired; the row and its click history are kept
++          headers:
++            Cache-Control:
++              description: Always no-store
++              schema:
++                type: string
+         "429":
+           content:
+             application/problem+json:
+@@ -411,6 +433,9 @@ components:
+         customAlias:
+           type: string
+           pattern: "^[A-Za-z0-9_-]{4,32}$"
++        expiresAt:
++          type: string
++          format: date-time
+         url:
+           type: string
+           maxLength: 2048
+@@ -425,6 +450,11 @@ components:
+         createdAt:
+           type: string
+           format: date-time
++        expired:
++          type: boolean
++        expiresAt:
++          type: string
++          format: date-time
+         shortUrl:
+           type: string
+         url:
+@@ -485,6 +515,11 @@ components:
+           format: int64
+         code:
+           type: string
++        expired:
++          type: boolean
++        expiresAt:
++          type: string
++          format: date-time
+         lastClickedAt:
+           type: string
+           format: date-time
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java b/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java
+index 06cb220..0469245 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java
+@@ -2,20 +2,20 @@ package dev.harshil.shortener.api;
+ 
+ import dev.harshil.shortener.domain.AliasTakenException;
+ import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.domain.LogSanitizer;
+ import dev.harshil.shortener.domain.UrlValidationException;
+ import dev.harshil.shortener.domain.UrlValidationException.FieldError;
+-import java.net.URI;
+ import java.util.Comparator;
+ import java.util.List;
+-import java.util.Map;
+ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ import org.slf4j.MDC;
+ import org.springframework.dao.DataAccessException;
+ import org.springframework.dao.DataAccessResourceFailureException;
++import org.springframework.http.CacheControl;
+ import org.springframework.http.HttpHeaders;
+ import org.springframework.http.HttpStatus;
+ import org.springframework.http.HttpStatusCode;
+@@ -24,7 +24,6 @@ import org.springframework.http.ProblemDetail;
+ import org.springframework.http.ResponseEntity;
+ import org.springframework.http.converter.HttpMessageNotReadableException;
+ import org.springframework.jdbc.CannotGetJdbcConnectionException;
+-import org.springframework.web.ErrorResponse;
+ import org.springframework.web.HttpMediaTypeNotSupportedException;
+ import org.springframework.web.HttpRequestMethodNotSupportedException;
+ import org.springframework.web.bind.MethodArgumentNotValidException;
+@@ -42,15 +41,20 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
+  * requestId} and {@code timestamp}, is identical to the one the filters write through {@code
+  * ProblemWriter}. Details are fixed sentences chosen here: a parser or driver message never reaches
+  * a client, and the full exception is logged server-side with the request id instead.
++ *
++ * <p>This class is the mapping table only. Building the response, the shared validation and
++ * unknown-path bodies, and the standardisation of framework-built bodies live in {@link
++ * ProblemResponses} (refactor T-104), so a new problem type adds one mapping method here and
++ * nothing else.
+  */
+ @RestControllerAdvice
+ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+ 
+-  static final String ERRORS = "errors";
+-  static final String VALIDATION_TITLE = "Request validation failed";
+-  static final String VALIDATION_DETAIL = "One or more fields are invalid";
++  static final String ERRORS = ProblemResponses.ERRORS;
++  static final String VALIDATION_TITLE = ProblemResponses.VALIDATION_TITLE;
++  static final String VALIDATION_DETAIL = ProblemResponses.VALIDATION_DETAIL;
+   static final String UNREADABLE = "Request body is missing or is not valid JSON";
+-  static final String NO_RESOURCE = "No resource at this path";
++  static final String NO_RESOURCE = ProblemResponses.NO_RESOURCE;
+   static final String UNEXPECTED = "Unexpected error";
+   static final String RETRY_AFTER_SECONDS = "5";
+ 
+@@ -64,7 +68,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+    */
+   @ExceptionHandler(UrlValidationException.class)
+   public ResponseEntity<ProblemDetail> handleUrlValidation(UrlValidationException ex) {
+-    return respond(validationFailed(ex.getErrors()));
++    return ProblemResponses.respond(ProblemResponses.validationFailed(ex.getErrors()));
+   }
+ 
+   /**
+@@ -75,11 +79,28 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+    */
+   @ExceptionHandler(LinkNotFoundException.class)
+   public ResponseEntity<ProblemDetail> handleLinkNotFound(LinkNotFoundException ex) {
+-    return respond(
++    return ProblemResponses.respond(
+         ProblemDetails.of(
+             HttpStatus.NOT_FOUND, ProblemTypes.LINK_NOT_FOUND, "Link not found", ex.getMessage()));
+   }
+ 
++  /**
++   * Expired link on the redirect path: 410 with {@code Cache-Control: no-store}, so no intermediary
++   * keeps a cached answer for a link that has stopped redirecting (design 3.6).
++   *
++   * @param ex the expiry
++   * @return the problem response
++   */
++  @ExceptionHandler(LinkExpiredException.class)
++  public ResponseEntity<ProblemDetail> handleLinkExpired(LinkExpiredException ex) {
++    HttpHeaders headers = new HttpHeaders();
++    headers.setCacheControl(CacheControl.noStore());
++    return ProblemResponses.respond(
++        ProblemDetails.of(
++            HttpStatus.GONE, ProblemTypes.LINK_EXPIRED, "Link has expired", ex.getMessage()),
++        headers);
++  }
++
+   /**
+    * Alias already stored, including a lost race on the unique constraint: 409.
+    *
+@@ -88,7 +109,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+    */
+   @ExceptionHandler(AliasTakenException.class)
+   public ResponseEntity<ProblemDetail> handleAliasTaken(AliasTakenException ex) {
+-    return respond(
++    return ProblemResponses.respond(
+         ProblemDetails.of(
+             HttpStatus.CONFLICT,
+             ProblemTypes.ALIAS_TAKEN,
+@@ -107,7 +128,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+       CodeGenerationExhaustedException ex) {
+     log.error(
+         "Code generation exhausted after {} attempts; requestId={}", ex.getAttempts(), requestId());
+-    return respond(
++    return ProblemResponses.respond(
+         ProblemDetails.of(
+             HttpStatus.INTERNAL_SERVER_ERROR,
+             ProblemTypes.CODE_GENERATION_EXHAUSTED,
+@@ -129,7 +150,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+     log.error("Database unavailable; requestId={}", requestId(), ex);
+     HttpHeaders headers = new HttpHeaders();
+     headers.set(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
+-    return respond(
++    return ProblemResponses.respond(
+         ProblemDetails.of(
+             HttpStatus.SERVICE_UNAVAILABLE,
+             ProblemTypes.SERVICE_UNAVAILABLE,
+@@ -148,7 +169,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+   @ExceptionHandler(Exception.class)
+   public ResponseEntity<ProblemDetail> handleUnexpected(Exception ex) {
+     log.error("Unhandled exception; requestId={}", requestId(), ex);
+-    return respond(
++    return ProblemResponses.respond(
+         ProblemDetails.of(
+             HttpStatus.INTERNAL_SERVER_ERROR,
+             ProblemTypes.ABOUT_BLANK,
+@@ -167,7 +188,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+             .sorted(Comparator.comparing(error -> error.getField()))
+             .map(error -> new FieldError(error.getField(), messageOf(error.getDefaultMessage())))
+             .toList();
+-    return handleExceptionInternal(ex, validationFailed(errors), headers, status, request);
++    return handleExceptionInternal(
++        ex, ProblemResponses.validationFailed(errors), headers, status, request);
+   }
+ 
+   @Override
+@@ -215,13 +237,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+   @Override
+   protected ResponseEntity<Object> handleNoResourceFoundException(
+       NoResourceFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+-    return handleExceptionInternal(ex, noResource(status), headers, status, request);
++    return handleExceptionInternal(
++        ex, ProblemResponses.noResource(status), headers, status, request);
+   }
+ 
+   @Override
+   protected ResponseEntity<Object> handleNoHandlerFoundException(
+       NoHandlerFoundException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+-    return handleExceptionInternal(ex, noResource(status), headers, status, request);
++    return handleExceptionInternal(
++        ex, ProblemResponses.noResource(status), headers, status, request);
+   }
+ 
+   /**
+@@ -238,67 +262,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+       HttpStatusCode status,
+       WebRequest request) {
+     ProblemDetail problem =
+-        body instanceof ProblemDetail detail ? detail : frameworkBody(ex, status);
++        body instanceof ProblemDetail detail ? detail : ProblemResponses.frameworkBody(ex, status);
+     HttpHeaders problemHeaders = HttpHeaders.copyOf(headers);
+     problemHeaders.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
+     return super.handleExceptionInternal(
+-        ex, standardised(problem, status), problemHeaders, status, request);
+-  }
+-
+-  private static ProblemDetail frameworkBody(Exception ex, HttpStatusCode status) {
+-    return ex instanceof ErrorResponse response
+-        ? response.getBody()
+-        : ProblemDetail.forStatus(status);
+-  }
+-
+-  /** Returns the body unchanged when it already has both members, otherwise a rebuilt copy. */
+-  private static ProblemDetail standardised(ProblemDetail problem, HttpStatusCode status) {
+-    Map<String, Object> properties = problem.getProperties();
+-    if (properties != null
+-        && properties.containsKey(ProblemDetails.REQUEST_ID)
+-        && properties.containsKey(ProblemDetails.TIMESTAMP)) {
+-      return problem;
+-    }
+-    URI type = problem.getType() == null ? ProblemTypes.ABOUT_BLANK : problem.getType();
+-    ProblemDetail standard =
+-        ProblemDetails.of(status, type, problem.getTitle(), problem.getDetail());
+-    standard.setInstance(problem.getInstance());
+-    if (properties != null) {
+-      properties.forEach(standard::setProperty);
+-    }
+-    return standard;
+-  }
+-
+-  private static ProblemDetail noResource(HttpStatusCode status) {
+-    return ProblemDetails.of(status, ProblemTypes.LINK_NOT_FOUND, "Link not found", NO_RESOURCE);
+-  }
+-
+-  private static ProblemDetail validationFailed(List<FieldError> errors) {
+-    ProblemDetail problem =
+-        ProblemDetails.of(
+-            HttpStatus.BAD_REQUEST,
+-            ProblemTypes.VALIDATION_FAILED,
+-            VALIDATION_TITLE,
+-            VALIDATION_DETAIL);
+-    problem.setProperty(ERRORS, errors);
+-    return problem;
++        ex, ProblemResponses.standardised(problem, status), problemHeaders, status, request);
+   }
+ 
+   private static String messageOf(@Nullable String defaultMessage) {
+     return defaultMessage == null ? "is invalid" : defaultMessage;
+   }
+ 
+-  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem) {
+-    return respond(problem, new HttpHeaders());
+-  }
+-
+-  private static ResponseEntity<ProblemDetail> respond(ProblemDetail problem, HttpHeaders headers) {
+-    return ResponseEntity.status(problem.getStatus())
+-        .headers(headers)
+-        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+-        .body(problem);
+-  }
+-
+   private static String requestId() {
+     return LogSanitizer.sanitize(MDC.get(ProblemDetails.REQUEST_ID));
+   }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java
+index 73f962f..34d1af8 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java
+@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.media.Content;
+ import io.swagger.v3.oas.annotations.responses.ApiResponse;
+ import jakarta.validation.Valid;
+ import java.net.URI;
++import java.time.Clock;
+ import org.springframework.http.HttpStatus;
+ import org.springframework.http.MediaType;
+ import org.springframework.http.ResponseEntity;
+@@ -39,16 +40,20 @@ public class LinkController {
+ 
+   private final LinkService links;
+   private final ShortUrlBuilder shortUrls;
++  private final Clock clock;
+ 
+   /**
+    * Creates the controller.
+    *
+    * @param links link use cases
+    * @param shortUrls short URL rendering
++   * @param clock application clock against which {@code expired} is computed when a response is
++   *     built
+    */
+-  public LinkController(LinkService links, ShortUrlBuilder shortUrls) {
++  public LinkController(LinkService links, ShortUrlBuilder shortUrls, Clock clock) {
+     this.links = links;
+     this.shortUrls = shortUrls;
++    this.clock = clock;
+   }
+ 
+   /**
+@@ -68,7 +73,7 @@ public class LinkController {
+   }
+ 
+   /**
+-   * Returns a link's metadata.
++   * Returns a link's metadata; an expired link is still returned, with {@code expired} true.
+    *
+    * @param code the short code
+    * @return 200 with the link
+@@ -94,6 +99,6 @@ public class LinkController {
+   }
+ 
+   private LinkResponse toResponse(Link link) {
+-    return LinkResponse.of(link, shortUrls.shortUrl(link.getCode()));
++    return LinkResponse.of(link, shortUrls.shortUrl(link.getCode()), clock.instant());
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java b/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java
+index b61f676..79ec6c6 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java
+@@ -14,7 +14,9 @@ import io.swagger.v3.oas.models.media.Schema;
+ import io.swagger.v3.oas.models.media.StringSchema;
+ import io.swagger.v3.oas.models.responses.ApiResponse;
+ import io.swagger.v3.oas.models.responses.ApiResponses;
++import java.util.Comparator;
+ import java.util.List;
++import java.util.stream.Stream;
+ import org.springdoc.core.customizers.OpenApiCustomizer;
+ import org.springframework.http.HttpHeaders;
+ import org.springframework.stereotype.Component;
+@@ -26,8 +28,9 @@ import org.springframework.stereotype.Component;
+  * the authentication entry point and the exception handler are the same everywhere, so they are
+  * added here once instead of being repeated in annotations that drift. Every error response points
+  * at one shared {@code ProblemDetail} schema. Operations under {@code /api/} additionally get the
+- * 401. A response an operation already declares for a status is left untouched, so an author can
+- * still document a specific case.
++ * 401; the redirect operations under {@code /{code}} additionally get the 410. A response an
++ * operation already declares for a status is left untouched, so an author can still document a
++ * specific case.
+  */
+ @Component
+ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
+@@ -37,8 +40,13 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
+ 
+   static final String PROBLEM_MEDIA_TYPE = "application/problem+json";
+   static final String UNAUTHORIZED = "401";
++  static final String GONE = "410";
+ 
+   private static final String API_PREFIX = "/api/";
++
++  /** The redirect path as springdoc renders it, with the code pattern stripped. */
++  private static final String REDIRECT_PATH = "/{code}";
++
+   private static final String SCHEMA_REF = "#/components/schemas/" + PROBLEM_SCHEMA;
+   private static final String RETRY_AFTER_DESCRIPTION = "Seconds to wait before retrying";
+ 
+@@ -64,6 +72,19 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
+           HttpHeaders.WWW_AUTHENTICATE,
+           "Challenge, always ApiKey realm=\"url-shortener\"");
+ 
++  private static final CatalogueEntry GONE_ENTRY =
++      new CatalogueEntry(
++          GONE,
++          "Link has expired; the row and its click history are kept",
++          HttpHeaders.CACHE_CONTROL,
++          "Always no-store");
++
++  /** The redirect's catalogue: the common entries plus the 410, kept in status order. */
++  private static final List<CatalogueEntry> REDIRECT_ENTRIES =
++      Stream.concat(COMMON_ENTRIES.stream(), Stream.of(GONE_ENTRY))
++          .sorted(Comparator.comparing(CatalogueEntry::status))
++          .toList();
++
+   @Override
+   public void customise(OpenAPI openApi) {
+     components(openApi).addSchemas(PROBLEM_SCHEMA, problemSchema());
+@@ -86,12 +107,16 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
+       if (path.startsWith(API_PREFIX)) {
+         responses.putIfAbsent(UNAUTHORIZED_ENTRY.status(), UNAUTHORIZED_ENTRY.toResponse());
+       }
+-      for (CatalogueEntry entry : COMMON_ENTRIES) {
++      for (CatalogueEntry entry : catalogueFor(path)) {
+         responses.putIfAbsent(entry.status(), entry.toResponse());
+       }
+     }
+   }
+ 
++  private static List<CatalogueEntry> catalogueFor(String path) {
++    return REDIRECT_PATH.equals(path) ? REDIRECT_ENTRIES : COMMON_ENTRIES;
++  }
++
+   private static ApiResponses responsesOf(Operation operation) {
+     if (operation.getResponses() == null) {
+       operation.setResponses(new ApiResponses());
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/ProblemResponses.java b/url-shortener/src/main/java/dev/harshil/shortener/api/ProblemResponses.java
+new file mode 100644
+index 0000000..f93b908
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/ProblemResponses.java
+@@ -0,0 +1,93 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.domain.UrlValidationException.FieldError;
++import java.net.URI;
++import java.util.List;
++import java.util.Map;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.HttpStatusCode;
++import org.springframework.http.MediaType;
++import org.springframework.http.ProblemDetail;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.ErrorResponse;
++
++/**
++ * Builds and re-shapes the RFC 9457 bodies the controller advice returns (design 3.4, refactor
++ * T-104). {@link ApiExceptionHandler} keeps the mapping from exception to problem type; this class
++ * owns everything that is about the body itself: wrapping a problem in a {@code
++ * application/problem+json} response, the two shared bodies for validation and unknown paths, and
++ * the standardisation of bodies the framework built so they carry {@code requestId} and {@code
++ * timestamp} like every other error.
++ */
++final class ProblemResponses {
++
++  static final String ERRORS = "errors";
++  static final String VALIDATION_TITLE = "Request validation failed";
++  static final String VALIDATION_DETAIL = "One or more fields are invalid";
++  static final String NO_RESOURCE = "No resource at this path";
++
++  private ProblemResponses() {}
++
++  /** Wraps a problem in a response with its own status and the problem content type. */
++  static ResponseEntity<ProblemDetail> respond(ProblemDetail problem) {
++    return respond(problem, new HttpHeaders());
++  }
++
++  /**
++   * Same as {@link #respond(ProblemDetail)} with extra headers, for example {@code Retry-After}.
++   */
++  static ResponseEntity<ProblemDetail> respond(ProblemDetail problem, HttpHeaders headers) {
++    return ResponseEntity.status(problem.getStatus())
++        .headers(headers)
++        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
++        .body(problem);
++  }
++
++  /** The 400 body shared by Bean Validation and the URL rules; {@code errors} lists the fields. */
++  static ProblemDetail validationFailed(List<FieldError> errors) {
++    ProblemDetail problem =
++        ProblemDetails.of(
++            HttpStatus.BAD_REQUEST,
++            ProblemTypes.VALIDATION_FAILED,
++            VALIDATION_TITLE,
++            VALIDATION_DETAIL);
++    problem.setProperty(ERRORS, errors);
++    return problem;
++  }
++
++  /**
++   * The 404 body for a path no controller serves, deliberately the same type as an unknown code.
++   */
++  static ProblemDetail noResource(HttpStatusCode status) {
++    return ProblemDetails.of(status, ProblemTypes.LINK_NOT_FOUND, "Link not found", NO_RESOURCE);
++  }
++
++  /**
++   * The body the framework attached to an exception that was not mapped explicitly, or a bare
++   * problem for the status when the exception carries none.
++   */
++  static ProblemDetail frameworkBody(Exception ex, HttpStatusCode status) {
++    return ex instanceof ErrorResponse response
++        ? response.getBody()
++        : ProblemDetail.forStatus(status);
++  }
++
++  /** Returns the body unchanged when it already has both members, otherwise a rebuilt copy. */
++  static ProblemDetail standardised(ProblemDetail problem, HttpStatusCode status) {
++    Map<String, Object> properties = problem.getProperties();
++    if (properties != null
++        && properties.containsKey(ProblemDetails.REQUEST_ID)
++        && properties.containsKey(ProblemDetails.TIMESTAMP)) {
++      return problem;
++    }
++    URI type = problem.getType() == null ? ProblemTypes.ABOUT_BLANK : problem.getType();
++    ProblemDetail standard =
++        ProblemDetails.of(status, type, problem.getTitle(), problem.getDetail());
++    standard.setInstance(problem.getInstance());
++    if (properties != null) {
++      properties.forEach(standard::setProperty);
++    }
++    return standard;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+index f1b3da2..f338f5d 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+@@ -2,6 +2,7 @@ package dev.harshil.shortener.api;
+ 
+ import dev.harshil.shortener.domain.ClickRecorded;
+ import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.service.LinkService;
+ import io.micrometer.core.instrument.Counter;
+@@ -33,6 +34,10 @@ import org.springframework.web.bind.annotation.RestController;
+  * request is not read again afterwards; the asynchronous recorder owns the rest. {@code HEAD} is
+  * mapped separately so it resolves and reports the same status without counting a click.
+  *
++ * <p>An expired link is refused by the service with {@link LinkExpiredException}; it is counted
++ * here as {@code outcome=expired}, no click is published, and the handler answers 410 with {@code
++ * Cache-Control: no-store} (design 3.6, brownfield). {@code HEAD} mirrors the 410.
++ *
+  * <p>The path pattern admits only strings that could be codes, so browser noise such as {@code
+  * /favicon.ico} is answered by the framework's 404 without a database call.
+  */
+@@ -45,6 +50,7 @@ public class RedirectController {
+   static final String OUTCOME_TAG = "outcome";
+   static final String OUTCOME_HIT = "hit";
+   static final String OUTCOME_MISS = "miss";
++  static final String OUTCOME_EXPIRED = "expired";
+   static final String CODE_PATH = "/{code:[A-Za-z0-9_-]{4,32}}";
+ 
+   private final LinkService links;
+@@ -52,6 +58,7 @@ public class RedirectController {
+   private final Clock clock;
+   private final Counter hits;
+   private final Counter misses;
++  private final Counter expired;
+ 
+   /**
+    * Creates the controller.
+@@ -68,6 +75,7 @@ public class RedirectController {
+     this.clock = clock;
+     this.hits = registry.counter(REDIRECTS_METRIC, OUTCOME_TAG, OUTCOME_HIT);
+     this.misses = registry.counter(REDIRECTS_METRIC, OUTCOME_TAG, OUTCOME_MISS);
++    this.expired = registry.counter(REDIRECTS_METRIC, OUTCOME_TAG, OUTCOME_EXPIRED);
+   }
+ 
+   /**
+@@ -117,6 +125,9 @@ public class RedirectController {
+     } catch (LinkNotFoundException e) {
+       misses.increment();
+       throw e;
++    } catch (LinkExpiredException e) {
++      expired.increment();
++      throw e;
+     }
+   }
+ 
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java
+index 8c80fbd..8cb8e96 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java
+@@ -4,19 +4,24 @@ import dev.harshil.shortener.service.UrlValidator;
+ import jakarta.validation.constraints.NotBlank;
+ import jakarta.validation.constraints.Pattern;
+ import jakarta.validation.constraints.Size;
++import java.time.Instant;
+ 
+ /**
+  * Body of {@code POST /api/v1/links} (design 3.3).
+  *
+  * <p>Bean Validation covers presence, length and the alias shape, so a malformed request is
+  * rejected before any service code runs; the URL rules that need parsing live in {@link
+- * UrlValidator}, and the reserved-alias rule in {@code LinkService}, because both produce
+- * domain-specific messages. Components are reference types so an absent member is a clear
+- * validation error rather than a generic parse failure (design 4.3).
++ * UrlValidator}, and the reserved-alias and future-expiry rules in {@code LinkService}, because
++ * they produce domain-specific messages and the expiry check needs the application clock.
++ * Components are reference types so an absent member is a clear validation error rather than a
++ * generic parse failure (design 4.3).
+  *
+  * @param url the target URL, absolute {@code http} or {@code https}, at most 2048 characters
+  * @param customAlias optional caller-chosen code, 4 to 32 characters of {@code [A-Za-z0-9_-]};
+  *     {@code null} asks the service to generate one
++ * @param expiresAt optional absolute expiry as an RFC 3339 timestamp with an offset; Jackson parses
++ *     it into an {@code Instant}, so a zoneless string fails parsing and is answered with the
++ *     generic 400 for an unreadable body; {@code null} means the link never expires
+  */
+ public record CreateLinkRequest(
+     @NotBlank(message = "URL is required")
+@@ -25,7 +30,8 @@ public record CreateLinkRequest(
+     @Pattern(
+             regexp = CreateLinkRequest.ALIAS_PATTERN,
+             message = "Alias must be 4 to 32 characters of letters, digits, underscore or hyphen")
+-        String customAlias) {
++        String customAlias,
++    Instant expiresAt) {
+ 
+   /** Shape of an acceptable alias; also the path pattern every code endpoint uses. */
+   public static final String ALIAS_PATTERN = "^[A-Za-z0-9_-]{4,32}$";
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java
+index fdff86d..d59a6b3 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java
+@@ -11,17 +11,32 @@ import java.time.Instant;
+  *     the current request
+  * @param url the canonical target URL
+  * @param createdAt when the link was created, UTC
++ * @param expiresAt when the link stops redirecting, UTC, or {@code null} when it never expires
++ * @param expired whether the link had expired at the moment this response was built
+  */
+-public record LinkResponse(String code, String shortUrl, String url, Instant createdAt) {
++public record LinkResponse(
++    String code,
++    String shortUrl,
++    String url,
++    Instant createdAt,
++    Instant expiresAt,
++    Boolean expired) {
+ 
+   /**
+    * Builds the response for a stored link.
+    *
+    * @param link the entity
+    * @param shortUrl the absolute short URL for {@code link.getCode()}
++   * @param now the current instant from the application clock, used to compute {@code expired}
+    * @return the response body
+    */
+-  public static LinkResponse of(Link link, String shortUrl) {
+-    return new LinkResponse(link.getCode(), shortUrl, link.getOriginalUrl(), link.getCreatedAt());
++  public static LinkResponse of(Link link, String shortUrl, Instant now) {
++    return new LinkResponse(
++        link.getCode(),
++        shortUrl,
++        link.getOriginalUrl(),
++        link.getCreatedAt(),
++        link.getExpiresAt(),
++        link.isExpired(now));
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+index be9546f..08cb5d6 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+@@ -3,13 +3,22 @@ package dev.harshil.shortener.api.dto;
+ import java.time.Instant;
+ 
+ /**
+- * Click statistics for one link (design 3.3), computed by a single aggregate query.
++ * Click statistics for one link (design 3.3), computed by a single aggregate query. Expired links
++ * keep their rows and events, so the counts are reported unchanged alongside the expiry state.
+  *
+  * @param code the short code
+  * @param totalClicks every recorded click
+  * @param clicksLast24h clicks in the 24 hours before the request, inclusive of the boundary
+  * @param clicksLast7d clicks in the 7 days before the request, inclusive of the boundary
+  * @param lastClickedAt the most recent click, or {@code null} when the link was never followed
++ * @param expiresAt when the link stops redirecting, UTC, or {@code null} when it never expires
++ * @param expired whether the link had expired at the moment this response was built
+  */
+ public record StatsResponse(
+-    String code, Long totalClicks, Long clicksLast24h, Long clicksLast7d, Instant lastClickedAt) {}
++    String code,
++    Long totalClicks,
++    Long clicksLast24h,
++    Long clicksLast7d,
++    Instant lastClickedAt,
++    Instant expiresAt,
++    Boolean expired) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java
+index 731954a..e9c6ecf 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java
+@@ -18,6 +18,10 @@ import java.util.Objects;
+  * exception message never reveals where a link points (design 3.5, NFR-05). The entity has no
+  * setters: a link is immutable after creation, and the database cascade, not an entity collection,
+  * removes its click events when it is deleted.
++ *
++ * <p>A link may carry an optional absolute expiry (design 3.6, brownfield). The row is never
++ * removed when it passes; {@link #isExpired(Instant)} is evaluated lazily against the application
++ * clock wherever the distinction matters.
+  */
+ @Entity
+ @Table(name = "links")
+@@ -36,6 +40,9 @@ public class Link {
+   @Column(name = "created_at", nullable = false)
+   private Instant createdAt;
+ 
++  @Column(name = "expires_at")
++  private Instant expiresAt;
++
+   /** JPA only; Hibernate populates the fields reflectively. */
+   protected Link() {}
+ 
+@@ -45,11 +52,14 @@ public class Link {
+    * @param code the unique short code, already validated by the service
+    * @param originalUrl the canonical target URL, already validated by the service
+    * @param createdAt the creation instant from the application clock
++   * @param expiresAt the instant from which the link no longer redirects, already checked to be in
++   *     the future by the service; {@code null} means the link never expires
+    */
+-  public Link(String code, String originalUrl, Instant createdAt) {
++  public Link(String code, String originalUrl, Instant createdAt, Instant expiresAt) {
+     this.code = code;
+     this.originalUrl = originalUrl;
+     this.createdAt = createdAt;
++    this.expiresAt = expiresAt;
+   }
+ 
+   public Long getId() {
+@@ -68,6 +78,25 @@ public class Link {
+     return createdAt;
+   }
+ 
++  /** Returns the expiry instant, or {@code null} when the link never expires. */
++  public Instant getExpiresAt() {
++    return expiresAt;
++  }
++
++  /**
++   * Tells whether the link has expired at the given instant. The boundary is inclusive: a link
++   * whose {@code expiresAt} equals {@code now} is already expired, so "expired" means {@code
++   * expiresAt <= now}. Instants are compared on the absolute time line, so offsets and daylight
++   * saving changes play no part.
++   *
++   * @param now the current instant from the application clock
++   * @return true when an expiry is set and it is not after {@code now}; a link without expiry is
++   *     never expired
++   */
++  public boolean isExpired(Instant now) {
++    return expiresAt != null && !expiresAt.isAfter(now);
++  }
++
+   @Override
+   public boolean equals(Object other) {
+     if (this == other) {
+@@ -87,6 +116,14 @@ public class Link {
+   /** Omits the target URL on purpose; see the class comment. */
+   @Override
+   public String toString() {
+-    return "Link{id=" + id + ", code=" + code + ", createdAt=" + createdAt + "}";
++    return "Link{id="
++        + id
++        + ", code="
++        + code
++        + ", createdAt="
++        + createdAt
++        + ", expiresAt="
++        + expiresAt
++        + "}";
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkExpiredException.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkExpiredException.java
+new file mode 100644
+index 0000000..9fe6c0f
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/LinkExpiredException.java
+@@ -0,0 +1,36 @@
++package dev.harshil.shortener.domain;
++
++import java.time.Instant;
++
++/**
++ * Raised when a redirect is asked for a link whose {@code expiresAt} has passed. Mapped to the 410
++ * {@code link-expired} problem (design 3.4) by the API layer. Only the redirect path throws it: the
++ * management API keeps returning expired links so their metadata and statistics stay readable
++ * (design 3.6).
++ */
++public final class LinkExpiredException extends RuntimeException {
++
++  private final String code;
++  private final Instant expiresAt;
++
++  /**
++   * Creates the exception for a link that was found but has expired.
++   *
++   * @param code the code the client presented; it has already passed the path pattern, and it is
++   *     sanitised again here so the message stays safe for any log line
++   * @param expiresAt the instant the link expired
++   */
++  public LinkExpiredException(String code, Instant expiresAt) {
++    super("Link " + LogSanitizer.sanitize(code) + " expired at " + expiresAt);
++    this.code = code;
++    this.expiresAt = expiresAt;
++  }
++
++  public String getCode() {
++    return code;
++  }
++
++  public Instant getExpiresAt() {
++    return expiresAt;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+index 18cdc47..37f2ecb 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+@@ -42,10 +42,12 @@ public class AnalyticsService {
+   }
+ 
+   /**
+-   * Computes the statistics for a link.
++   * Computes the statistics for a link. An expired link is reported like any other, with {@code
++   * expired} set from the same clock instant that cuts the windows: its events are kept, so its
++   * counts do not change when it expires (design 3.6).
+    *
+    * @param code the short code
+-   * @return totals, windowed counts and the last click
++   * @return totals, windowed counts, the last click and the expiry state
+    * @throws LinkNotFoundException when no link has that code
+    */
+   @Transactional(readOnly = true)
+@@ -59,6 +61,8 @@ public class AnalyticsService {
+         summary.total(),
+         summary.last24h(),
+         summary.last7d(),
+-        summary.lastClickedAt());
++        summary.lastClickedAt(),
++        link.getExpiresAt(),
++        link.isExpired(now));
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java
+index f343a92..c3d99de 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java
+@@ -36,12 +36,14 @@ public class LinkAllocator {
+    * @param code the code to claim
+    * @param url the canonical target URL
+    * @param now the creation instant
++   * @param expiresAt the expiry instant, already validated by the caller, or {@code null} for a
++   *     link that never expires
+    * @return the persisted link with its identifier
+    * @throws org.springframework.dao.DataIntegrityViolationException when {@code code} is already
+    *     stored; the message names the {@code uk_links_code} constraint
+    */
+   @Transactional
+-  public Link insert(String code, String url, Instant now) {
+-    return links.saveAndFlush(new Link(code, url, now));
++  public Link insert(String code, String url, Instant now, Instant expiresAt) {
++    return links.saveAndFlush(new Link(code, url, now, expiresAt));
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java
+index bc24fa6..3831f03 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java
+@@ -4,6 +4,7 @@ import dev.harshil.shortener.api.dto.CreateLinkRequest;
+ import dev.harshil.shortener.domain.AliasTakenException;
+ import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
+ import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.domain.LogSanitizer;
+ import dev.harshil.shortener.domain.ReservedWords;
+@@ -40,6 +41,8 @@ public class LinkService {
+   static final String MSG_ALIAS_RESERVED = "Alias is reserved";
+   static final String MSG_ALIAS_SHAPE =
+       "Alias must be 4 to 32 characters of letters, digits, underscore or hyphen";
++  static final String EXPIRES_AT_FIELD = "expiresAt";
++  static final String MSG_EXPIRES_AT_PAST = "expiresAt must be in the future";
+   static final String LINKS_CREATED_METRIC = "shortener.links.created";
+ 
+   private static final Logger log = LoggerFactory.getLogger(LinkService.class);
+@@ -81,19 +84,22 @@ public class LinkService {
+   /**
+    * Validates the request and stores a new link.
+    *
+-   * @param request the client's URL and optional alias, already past Bean Validation
++   * @param request the client's URL, optional alias and optional expiry, already past Bean
++   *     Validation
+    * @return the stored link
+-   * @throws UrlValidationException when the URL breaks a rule or the alias is reserved
++   * @throws UrlValidationException when the URL breaks a rule, the alias is reserved, or the expiry
++   *     is not in the future
+    * @throws AliasTakenException when the alias is already a stored code
+    * @throws CodeGenerationExhaustedException when {@value #MAX_ATTEMPTS} random codes collided
+    */
+   public Link create(CreateLinkRequest request) {
+     String url = urlValidator.validate(request.url());
+     Instant now = clock.instant();
++    Instant expiresAt = requireFuture(request.expiresAt(), now);
+     Link link =
+         request.hasCustomAlias()
+-            ? allocateAlias(request.customAlias(), url, now)
+-            : allocateRandom(url, now);
++            ? allocateAlias(request.customAlias(), url, now, expiresAt)
++            : allocateRandom(url, now, expiresAt);
+     linksCreated.increment();
+     log.info(
+         "Created link code={} host={}",
+@@ -103,27 +109,33 @@ public class LinkService {
+   }
+ 
+   /**
+-   * Finds the link a redirect should follow.
++   * Finds the link a redirect should follow. Expiry is checked lazily here, against the same clock
++   * that validated it at create time, so a link stops redirecting the moment its {@code expiresAt}
++   * passes while its row and click history stay (design 3.6).
+    *
+    * @param code the code from the path
+    * @return the link
+    * @throws LinkNotFoundException when no link has that code
++   * @throws LinkExpiredException when the link exists but its expiry has passed
+    */
+   public Link resolve(String code) {
+-    return links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
++    Link link = get(code);
++    if (link.isExpired(clock.instant())) {
++      throw new LinkExpiredException(code, link.getExpiresAt());
++    }
++    return link;
+   }
+ 
+   /**
+-   * Finds a link for the management API. Today this is the same lookup as {@link #resolve}; the two
+-   * names exist so the redirect path can later diverge (for example, to report expiry) without
+-   * changing how metadata is read.
++   * Finds a link for the management API. Unlike {@link #resolve}, an expired link is returned, so
++   * its metadata and statistics remain readable and report the expiry.
+    *
+    * @param code the code from the path
+    * @return the link
+    * @throws LinkNotFoundException when no link has that code
+    */
+   public Link get(String code) {
+-    return resolve(code);
++    return links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
+   }
+ 
+   /**
+@@ -139,7 +151,18 @@ public class LinkService {
+     }
+   }
+ 
+-  private Link allocateAlias(String alias, String url, Instant now) {
++  /**
++   * An expiry must lie strictly after now; "expired" means {@code expiresAt <= now} (see {@link
++   * Link#isExpired}), so a value equal to now would be born expired and is rejected.
++   */
++  private static Instant requireFuture(Instant expiresAt, Instant now) {
++    if (expiresAt != null && !expiresAt.isAfter(now)) {
++      throw UrlValidationException.of(EXPIRES_AT_FIELD, MSG_EXPIRES_AT_PAST);
++    }
++    return expiresAt;
++  }
++
++  private Link allocateAlias(String alias, String url, Instant now, Instant expiresAt) {
+     if (!ALIAS.matcher(alias).matches()) {
+       throw UrlValidationException.of(ALIAS_FIELD, MSG_ALIAS_SHAPE);
+     }
+@@ -150,7 +173,7 @@ public class LinkService {
+       throw new AliasTakenException(alias);
+     }
+     try {
+-      return allocator.insert(alias, url, now);
++      return allocator.insert(alias, url, now, expiresAt);
+     } catch (DataIntegrityViolationException e) {
+       if (isCodeCollision(e)) {
+         throw new AliasTakenException(alias, e);
+@@ -159,11 +182,11 @@ public class LinkService {
+     }
+   }
+ 
+-  private Link allocateRandom(String url, Instant now) {
++  private Link allocateRandom(String url, Instant now, Instant expiresAt) {
+     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+       String code = generator.next();
+       try {
+-        return allocator.insert(code, url, now);
++        return allocator.insert(code, url, now, expiresAt);
+       } catch (DataIntegrityViolationException e) {
+         if (!isCodeCollision(e)) {
+           throw e;
+diff --git a/url-shortener/src/main/resources/db/migration/V2__add_link_expiry.sql b/url-shortener/src/main/resources/db/migration/V2__add_link_expiry.sql
+new file mode 100644
+index 0000000..ba9d25b
+--- /dev/null
++++ b/url-shortener/src/main/resources/db/migration/V2__add_link_expiry.sql
+@@ -0,0 +1,3 @@
++-- V2: optional link expiry (brownfield, task T-102); one single-column ALTER in the H2/PostgreSQL SQL intersection.
++-- Nullable on purpose: rows created before this migration carry no expiry and must never expire (design 3.5).
++ALTER TABLE links ADD COLUMN expires_at TIMESTAMP WITH TIME ZONE;
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java b/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
+index 4240ee2..b662d98 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
+@@ -30,6 +30,7 @@ class UrlShortenerApplicationTest {
+             "select max(version) from flyway_schema_history where success = true", Integer.class);
+ 
+     assertThat(tables).isEqualTo(2);
+-    assertThat(version).isEqualTo(1);
++    // V2 (link expiry, T-102) is now the latest successful migration on top of the V1 baseline.
++    assertThat(version).isEqualTo(2);
+   }
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java
+index 7b02271..a17ddad 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java
+@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
+ import dev.harshil.shortener.api.dto.CreateLinkRequest;
+ import dev.harshil.shortener.domain.AliasTakenException;
+ import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.domain.UrlValidationException;
+ import java.net.URI;
++import java.time.Instant;
+ import java.util.List;
+ import java.util.stream.Stream;
+ import org.junit.jupiter.api.AfterEach;
+@@ -70,6 +72,22 @@ class ApiExceptionHandlerTest {
+     assertThat(response.getBody().getDetail()).isEqualTo("No link with code abcdefg");
+   }
+ 
++  @Test
++  void handleLinkExpired_mapsTo410LinkExpiredWithNoStoreAndNoTargetUrl() {
++    Instant expiredAt = Instant.parse("2026-10-12T09:00:00Z");
++
++    ResponseEntity<ProblemDetail> response =
++        handler.handleLinkExpired(new LinkExpiredException("abcdefg", expiredAt));
++
++    assertThat(response.getStatusCode().value()).isEqualTo(410);
++    assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
++    assertThat(response.getHeaders().getContentType())
++        .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
++    assertStandard(response.getBody(), ProblemTypes.LINK_EXPIRED, "Link has expired");
++    assertThat(response.getBody().getDetail())
++        .isEqualTo("Link abcdefg expired at 2026-10-12T09:00:00Z");
++  }
++
+   @Test
+   void handleAliasTaken_mapsTo409AliasTaken() {
+     ResponseEntity<ProblemDetail> response =
+@@ -204,7 +222,7 @@ class ApiExceptionHandlerTest {
+   void handleException_methodArgumentNotValid_mapsTo400WithFieldErrorsSortedByField()
+       throws Exception {
+     BeanPropertyBindingResult binding =
+-        new BeanPropertyBindingResult(new CreateLinkRequest("", "ab"), "createLinkRequest");
++        new BeanPropertyBindingResult(new CreateLinkRequest("", "ab", null), "createLinkRequest");
+     binding.addError(new FieldError("createLinkRequest", "url", "URL is required"));
+     binding.addError(new FieldError("createLinkRequest", "customAlias", "Alias is too short"));
+     MethodParameter parameter =
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java
+index c0f047d..1153716 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java
+@@ -49,7 +49,7 @@ class ClickRecordingIT {
+ 
+   @Test
+   void get_redirect_recordsExactlyOneClickForTheLinkAsynchronously() {
+-    Link link = links.save(new Link("click01", "https://example.com/c", Instant.now()));
++    Link link = links.save(new Link("click01", "https://example.com/c", Instant.now(), null));
+ 
+     client.get().uri("/click01").exchange().expectStatus().isFound();
+ 
+@@ -61,7 +61,7 @@ class ClickRecordingIT {
+ 
+   @Test
+   void head_redirect_recordsNoClick() {
+-    links.save(new Link("head001", "https://example.com/h", Instant.now()));
++    links.save(new Link("head001", "https://example.com/h", Instant.now(), null));
+ 
+     client.head().uri("/head001").exchange().expectStatus().isFound();
+     client.get().uri("/head001").exchange().expectStatus().isFound();
+@@ -72,7 +72,7 @@ class ClickRecordingIT {
+ 
+   @Test
+   void get_redirect_whenTheInsertFails_stillReturns302AndCountsTheDrop() {
+-    links.save(new Link("fail001", "https://example.com/f", Instant.now()));
++    links.save(new Link("fail001", "https://example.com/f", Instant.now(), null));
+     doThrow(new DataAccessResourceFailureException("database gone"))
+         .when(clickEvents)
+         .save(any(ClickEvent.class));
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ExpiryIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ExpiryIT.java
+new file mode 100644
+index 0000000..f10d67b
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ExpiryIT.java
+@@ -0,0 +1,263 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.awaitility.Awaitility.await;
++
++import dev.harshil.shortener.api.dto.LinkResponse;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.MutableClock;
++import dev.harshil.shortener.support.TestProfile;
++import io.micrometer.core.instrument.MeterRegistry;
++import java.time.Duration;
++import java.time.Instant;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.boot.test.context.TestConfiguration;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Primary;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * Expiry end to end against the full context with a controllable clock (design 3.6, 3.13): a link
++ * redirects until its {@code expiresAt} passes, then answers 410 with {@code no-store} while its
++ * row, metadata and click history stay; past and zoneless values are refused at create.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class ExpiryIT {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String LINKS = "/api/v1/links";
++  private static final Instant START = Instant.parse("2026-10-12T10:00:00Z");
++  private static final Duration AT_MOST = Duration.ofSeconds(5);
++  private static final Duration SETTLE = Duration.ofMillis(500);
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private ClickEventRepository clickEvents;
++  @Autowired private MutableClock clock;
++  @Autowired private MeterRegistry registry;
++
++  @BeforeEach
++  void resetClock() {
++    clock.set(START);
++  }
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void expiredLinkIs410AndStatsRemain() {
++    // Offset other than Z on purpose: 16:30+05:30 is 11:00Z, one hour after START.
++    String code =
++        createAndReadCode(
++            "{\"url\":\"https://example.com/expiring\",\"expiresAt\":\"2026-10-12T16:30:00+05:30\"}",
++            "2026-10-12T11:00:00Z",
++            false);
++    client.get().uri("/" + code).exchange().expectStatus().isFound();
++    client.head().uri("/" + code).exchange().expectStatus().isFound();
++    await().atMost(AT_MOST).untilAsserted(() -> assertThat(clickEvents.count()).isEqualTo(1));
++    double expiredBefore = expiredRedirects();
++
++    clock.advance(Duration.ofHours(2));
++
++    client
++        .get()
++        .uri("/" + code)
++        .exchange()
++        .expectStatus()
++        .isEqualTo(410)
++        .expectHeader()
++        .valueEquals(HttpHeaders.CACHE_CONTROL, "no-store")
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/link-expired")
++        .jsonPath("$.title")
++        .isEqualTo("Link has expired")
++        .jsonPath("$.status")
++        .isEqualTo(410)
++        .jsonPath("$.timestamp")
++        .exists();
++    client
++        .head()
++        .uri("/" + code)
++        .exchange()
++        .expectStatus()
++        .isEqualTo(410)
++        .expectHeader()
++        .valueEquals(HttpHeaders.CACHE_CONTROL, "no-store");
++    metadata(code)
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.expired")
++        .isEqualTo(true)
++        .jsonPath("$.expiresAt")
++        .isEqualTo("2026-10-12T11:00:00Z");
++    stats(code)
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.totalClicks")
++        .isEqualTo(1)
++        .jsonPath("$.clicksLast24h")
++        .isEqualTo(1)
++        .jsonPath("$.expired")
++        .isEqualTo(true)
++        .jsonPath("$.expiresAt")
++        .isEqualTo("2026-10-12T11:00:00Z");
++    assertThat(expiredRedirects()).isEqualTo(expiredBefore + 2);
++    await().during(SETTLE).atMost(AT_MOST).until(() -> clickEvents.count() == 1);
++    assertThat(links.findByCode(code)).isPresent();
++  }
++
++  @Test
++  void expiredLink_canStillBeDeletedAndItsCodeIsThenUnknown() {
++    String code =
++        createAndReadCode(
++            "{\"url\":\"https://example.com/delete-me\",\"expiresAt\":\"2026-10-12T10:00:01Z\"}",
++            "2026-10-12T10:00:01Z",
++            false);
++    clock.advance(Duration.ofSeconds(1));
++    client.get().uri("/" + code).exchange().expectStatus().isEqualTo(410);
++
++    client
++        .delete()
++        .uri(LINKS + "/" + code)
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange()
++        .expectStatus()
++        .isNoContent();
++
++    client.get().uri("/" + code).exchange().expectStatus().isNotFound();
++    assertThat(links.existsByCode(code)).isFalse();
++  }
++
++  @Test
++  void linkWithoutExpiry_neverExpiresAndReportsNullExpiresAt() {
++    String code = createAndReadCode("{\"url\":\"https://example.com/forever\"}", null, false);
++
++    clock.advance(Duration.ofDays(3650));
++
++    client.get().uri("/" + code).exchange().expectStatus().isFound();
++    metadata(code)
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.expired")
++        .isEqualTo(false)
++        .jsonPath("$.expiresAt")
++        .isEmpty();
++    stats(code).expectStatus().isOk().expectBody().jsonPath("$.expired").isEqualTo(false);
++  }
++
++  @Test
++  void rejectsPastAndZoneless() {
++    create("{\"url\":\"https://example.com/past\",\"expiresAt\":\"2026-10-12T09:59:59Z\"}")
++        .expectStatus()
++        .isBadRequest()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/validation-failed")
++        .jsonPath("$.errors[0].field")
++        .isEqualTo("expiresAt")
++        .jsonPath("$.errors[0].message")
++        .isEqualTo("expiresAt must be in the future");
++
++    create("{\"url\":\"https://example.com/zoneless\",\"expiresAt\":\"2026-10-13T10:00:00\"}")
++        .expectStatus()
++        .isBadRequest()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/validation-failed")
++        .jsonPath("$.detail")
++        .isEqualTo(ApiExceptionHandler.UNREADABLE)
++        .jsonPath("$.errors")
++        .isEmpty();
++
++    assertThat(links.count()).isZero();
++  }
++
++  @Test
++  void expiresAtEqualToNow_isRejectedAtCreate() {
++    create("{\"url\":\"https://example.com/now\",\"expiresAt\":\"2026-10-12T10:00:00Z\"}")
++        .expectStatus()
++        .isBadRequest()
++        .expectBody()
++        .jsonPath("$.errors[0].field")
++        .isEqualTo("expiresAt");
++  }
++
++  private RestTestClient.ResponseSpec create(String json) {
++    return client
++        .post()
++        .uri(LINKS)
++        .header(API_KEY_HEADER, API_KEY)
++        .contentType(MediaType.APPLICATION_JSON)
++        .body(json)
++        .exchange();
++  }
++
++  private RestTestClient.ResponseSpec metadata(String code) {
++    return client.get().uri(LINKS + "/" + code).header(API_KEY_HEADER, API_KEY).exchange();
++  }
++
++  private RestTestClient.ResponseSpec stats(String code) {
++    return client
++        .get()
++        .uri(LINKS + "/" + code + "/stats")
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange();
++  }
++
++  private String createAndReadCode(String json, String expectedExpiresAt, boolean expectedExpired) {
++    LinkResponse body =
++        create(json)
++            .expectStatus()
++            .isCreated()
++            .expectBody(LinkResponse.class)
++            .returnResult()
++            .getResponseBody();
++    assertThat(body).isNotNull();
++    assertThat(body.expired()).isEqualTo(expectedExpired);
++    assertThat(body.expiresAt())
++        .isEqualTo(expectedExpiresAt == null ? null : Instant.parse(expectedExpiresAt));
++    return body.code();
++  }
++
++  private double expiredRedirects() {
++    return registry.counter("shortener.redirects", "outcome", "expired").count();
++  }
++
++  /**
++   * Replaces the application clock with one the test can move; the production bean stays unused.
++   */
++  @TestConfiguration(proxyBeanMethods = false)
++  static class ClockSupport {
++
++    @Bean
++    @Primary
++    MutableClock testClock() {
++      return new MutableClock(START);
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java
+index eedf16d..40daf19 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java
+@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
+ import static org.mockito.Mockito.when;
+ 
+ import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.config.ClockConfig;
+ import dev.harshil.shortener.config.SecurityConfig;
+ import dev.harshil.shortener.domain.AliasTakenException;
+ import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
+@@ -33,7 +34,7 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester.MockMvcRequest
+  * bodies produced through the shared handler. The service is mocked; the real security chain runs.
+  */
+ @WebMvcTest(LinkController.class)
+-@Import({SecurityConfig.class, ShortUrlBuilder.class})
++@Import({SecurityConfig.class, ShortUrlBuilder.class, ClockConfig.class})
+ @TestProfile
+ class LinkControllerTest {
+ 
+@@ -41,14 +42,14 @@ class LinkControllerTest {
+   private static final String API_KEY = "test-api-key";
+   private static final String LINKS = "/api/v1/links";
+   private static final Instant CREATED = Instant.parse("2026-10-12T10:00:00Z");
+-  private static final Link LINK = new Link("abcdefg", "https://example.com/page", CREATED);
++  private static final Link LINK = new Link("abcdefg", "https://example.com/page", CREATED, null);
+ 
+   @Autowired private MockMvcTester mvc;
+   @MockitoBean private LinkService linkService;
+ 
+   @Test
+   void create_validBodyWithKey_returns201WithLocationAndLinkBody() {
+-    when(linkService.create(new CreateLinkRequest("https://example.com/page", null)))
++    when(linkService.create(new CreateLinkRequest("https://example.com/page", null, null)))
+         .thenReturn(LINK);
+ 
+     assertThat(post("{\"url\":\"https://example.com/page\"}"))
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java
+index 8028658..de084c6 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java
+@@ -41,7 +41,7 @@ class LinkFlowIT {
+ 
+   @Test
+   void create_validUrl_returns201WithLocationSevenCharacterCodeAndBody() {
+-    create(new CreateLinkRequest("HTTPS://Example.COM/Landing?x=1", null))
++    create(new CreateLinkRequest("HTTPS://Example.COM/Landing?x=1", null, null))
+         .expectStatus()
+         .isCreated()
+         .expectHeader()
+@@ -63,7 +63,7 @@ class LinkFlowIT {
+ 
+   @Test
+   void create_customAlias_isHonouredAsTheCode() {
+-    create(new CreateLinkRequest("https://example.com/alias", "my-Alias_1"))
++    create(new CreateLinkRequest("https://example.com/alias", "my-Alias_1", null))
+         .expectStatus()
+         .isCreated()
+         .expectHeader()
+@@ -75,7 +75,7 @@ class LinkFlowIT {
+ 
+   @Test
+   void create_reservedAlias_returns400ValidationFailedOnCustomAlias() {
+-    create(new CreateLinkRequest("https://example.com/x", "actuator"))
++    create(new CreateLinkRequest("https://example.com/x", "actuator", null))
+         .expectStatus()
+         .isBadRequest()
+         .expectHeader()
+@@ -91,11 +91,11 @@ class LinkFlowIT {
+ 
+   @Test
+   void create_duplicateAlias_returns409AliasTaken() {
+-    create(new CreateLinkRequest("https://example.com/one", "dupeAlias"))
++    create(new CreateLinkRequest("https://example.com/one", "dupeAlias", null))
+         .expectStatus()
+         .isCreated();
+ 
+-    create(new CreateLinkRequest("https://example.com/two", "dupeAlias"))
++    create(new CreateLinkRequest("https://example.com/two", "dupeAlias", null))
+         .expectStatus()
+         .isEqualTo(409)
+         .expectHeader()
+@@ -109,7 +109,7 @@ class LinkFlowIT {
+ 
+   @Test
+   void create_invalidUrl_returns400WithUrlFieldError() {
+-    create(new CreateLinkRequest("http://127.0.0.1/admin", null))
++    create(new CreateLinkRequest("http://127.0.0.1/admin", null, null))
+         .expectStatus()
+         .isBadRequest()
+         .expectBody()
+@@ -127,7 +127,7 @@ class LinkFlowIT {
+         .post()
+         .uri(LINKS)
+         .contentType(MediaType.APPLICATION_JSON)
+-        .body(new CreateLinkRequest("https://example.com/x", null))
++        .body(new CreateLinkRequest("https://example.com/x", null, null))
+         .exchange()
+         .expectStatus()
+         .isUnauthorized()
+@@ -204,7 +204,9 @@ class LinkFlowIT {
+   void create_success_incrementsTheLinksCreatedCounter() {
+     double before = registry.counter("shortener.links.created").count();
+ 
+-    create(new CreateLinkRequest("https://example.com/counted", null)).expectStatus().isCreated();
++    create(new CreateLinkRequest("https://example.com/counted", null, null))
++        .expectStatus()
++        .isCreated();
+ 
+     assertThat(registry.counter("shortener.links.created").count()).isEqualTo(before + 1);
+   }
+@@ -221,7 +223,7 @@ class LinkFlowIT {
+ 
+   private String createAndReadCode(String url, String alias) {
+     LinkResponse body =
+-        create(new CreateLinkRequest(url, alias))
++        create(new CreateLinkRequest(url, alias, null))
+             .expectStatus()
+             .isCreated()
+             .expectBody(LinkResponse.class)
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java
+index 226937c..f3bd68e 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java
+@@ -88,7 +88,7 @@ class LinkManagementIT {
+             .uri(LINKS)
+             .header(API_KEY_HEADER, API_KEY)
+             .contentType(MediaType.APPLICATION_JSON)
+-            .body(new CreateLinkRequest(url, null))
++            .body(new CreateLinkRequest(url, null, null))
+             .exchange()
+             .expectStatus()
+             .isCreated()
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java
+index 6a5fb79..9dbd820 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java
+@@ -42,7 +42,31 @@ class OpenApiErrorCustomizerTest {
+ 
+     customizer.customise(openApi);
+ 
+-    assertThat(redirect.getResponses().keySet()).containsExactly("400", "404", "429", "500", "503");
++    assertThat(redirect.getResponses().keySet())
++        .containsExactly("400", "404", "410", "429", "500", "503");
++  }
++
++  @Test
++  void customise_redirectOperations_get410WithNoStoreHeaderOnGetAndHead() {
++    Operation redirect = new Operation();
++    Operation probe = new Operation();
++    OpenAPI openApi = documentWith("/{code}", new PathItem().get(redirect).head(probe));
++
++    customizer.customise(openApi);
++
++    assertThat(redirect.getResponses().get("410").getHeaders())
++        .containsKey(HttpHeaders.CACHE_CONTROL);
++    assertThat(probe.getResponses().get("410").getHeaders()).containsKey(HttpHeaders.CACHE_CONTROL);
++  }
++
++  @Test
++  void customise_managementOperation_doesNotGet410() {
++    Operation lookup = new Operation();
++    OpenAPI openApi = documentWith("/api/v1/links/{code}", new PathItem().get(lookup));
++
++    customizer.customise(openApi);
++
++    assertThat(lookup.getResponses()).doesNotContainKey("410");
+   }
+ 
+   @Test
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java
+index 54b5d01..5e5f48f 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java
+@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
+ import dev.harshil.shortener.config.SecurityConfig;
+ import dev.harshil.shortener.domain.ClickRecorded;
+ import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.service.LinkService;
+ import dev.harshil.shortener.support.TestProfile;
+@@ -51,7 +52,7 @@ class RedirectControllerTest {
+ 
+   @BeforeEach
+   void stubKnownLink() {
+-    Link link = new Link("abcdefg", TARGET, NOW.minusSeconds(3600));
++    Link link = new Link("abcdefg", TARGET, NOW.minusSeconds(3600), null);
+     ReflectionTestUtils.setField(link, "id", 42L);
+     when(linkService.resolve("abcdefg")).thenReturn(link);
+     when(linkService.resolve("missing")).thenThrow(new LinkNotFoundException("missing"));
+@@ -115,6 +116,39 @@ class RedirectControllerTest {
+     assertThat(mvc.get().uri("/abcdefg")).hasStatus(HttpStatus.FOUND);
+   }
+ 
++  @Test
++  void get_expiredCode_returns410LinkExpiredWithNoStoreCountsExpiredAndPublishesNothing() {
++    when(linkService.resolve("expired"))
++        .thenThrow(new LinkExpiredException("expired", NOW.minusSeconds(60)));
++    double expiredBefore = expired();
++    double hitsBefore = hits();
++
++    assertThat(mvc.get().uri("/expired"))
++        .hasStatus(HttpStatus.GONE)
++        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store")
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying("$.type", type -> type.assertThat().isEqualTo("/problems/link-expired"))
++        .hasPathSatisfying("$.title", title -> title.assertThat().isEqualTo("Link has expired"))
++        .hasPathSatisfying("$.status", status -> status.assertThat().isEqualTo(410));
++
++    assertThat(clicks.events()).isEmpty();
++    assertThat(expired()).isEqualTo(expiredBefore + 1);
++    assertThat(hits()).isEqualTo(hitsBefore);
++  }
++
++  @Test
++  void head_expiredCode_returns410WithNoStoreAndPublishesNothing() {
++    when(linkService.resolve("expired"))
++        .thenThrow(new LinkExpiredException("expired", NOW.minusSeconds(60)));
++
++    assertThat(mvc.head().uri("/expired"))
++        .hasStatus(HttpStatus.GONE)
++        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store");
++
++    assertThat(clicks.events()).isEmpty();
++  }
++
+   private double hits() {
+     return registry.counter("shortener.redirects", "outcome", "hit").count();
+   }
+@@ -123,6 +157,10 @@ class RedirectControllerTest {
+     return registry.counter("shortener.redirects", "outcome", "miss").count();
+   }
+ 
++  private double expired() {
++    return registry.counter("shortener.redirects", "outcome", "expired").count();
++  }
++
+   /** Captures published click events synchronously so the test can assert on them. */
+   static final class ClickSink {
+ 
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java
+index 5123a70..00b7616 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java
+@@ -40,7 +40,7 @@ class RedirectIT {
+ 
+   @Test
+   void get_knownCode_returns302WithStoredLocationAndNoStore() {
+-    links.save(new Link("redir01", TARGET, Instant.now()));
++    links.save(new Link("redir01", TARGET, Instant.now(), null));
+ 
+     client
+         .get()
+@@ -56,7 +56,7 @@ class RedirectIT {
+ 
+   @Test
+   void head_knownCode_returns302WithTheSameLocation() {
+-    links.save(new Link("probe01", TARGET, Instant.now()));
++    links.save(new Link("probe01", TARGET, Instant.now(), null));
+ 
+     client
+         .head()
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java
+index f1ce94e..e820495 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java
+@@ -35,7 +35,7 @@ class StatsControllerTest {
+   void stats_knownCodeWithKey_returns200WithEveryField() {
+     Instant lastClick = Instant.parse("2026-10-12T11:57:00Z");
+     when(analyticsService.stats("abcdefg"))
+-        .thenReturn(new StatsResponse("abcdefg", 10L, 2L, 7L, lastClick));
++        .thenReturn(new StatsResponse("abcdefg", 10L, 2L, 7L, lastClick, null, false));
+ 
+     assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
+         .hasStatusOk()
+@@ -52,7 +52,7 @@ class StatsControllerTest {
+   @Test
+   void stats_linkNeverClicked_rendersNullLastClickedAtExplicitly() {
+     when(analyticsService.stats("abcdefg"))
+-        .thenReturn(new StatsResponse("abcdefg", 0L, 0L, 0L, null));
++        .thenReturn(new StatsResponse("abcdefg", 0L, 0L, 0L, null, null, false));
+ 
+     assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
+         .hasStatusOk()
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java
+index 781f736..734b17b 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java
+@@ -125,7 +125,7 @@ class StatsIT {
+             .uri(LINKS)
+             .header(API_KEY_HEADER, API_KEY)
+             .contentType(MediaType.APPLICATION_JSON)
+-            .body(new CreateLinkRequest(url, null))
++            .body(new CreateLinkRequest(url, null, null))
+             .exchange()
+             .expectStatus()
+             .isCreated()
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/ExpiryEdgeCasesTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/ExpiryEdgeCasesTest.java
+new file mode 100644
+index 0000000..003d702
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/ExpiryEdgeCasesTest.java
+@@ -0,0 +1,93 @@
++package dev.harshil.shortener.domain;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import java.time.Instant;
++import java.time.OffsetDateTime;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.MethodSource;
++
++/**
++ * Regression table for the expiry boundary (task T-103, design 3.6). The rule under test is
++ * "expired when {@code expiresAt <= now}": the boundary instant itself is expired, one second later
++ * on the {@code expiresAt} side is not, {@code null} never expires, and the comparison is on the
++ * absolute time line so offsets and daylight-saving transitions cannot move it.
++ */
++class ExpiryEdgeCasesTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++  private static final Instant CREATED = NOW.minusSeconds(3600);
++
++  @ParameterizedTest(name = "{0}")
++  @MethodSource("boundaryCases")
++  void isExpired_atTheFixedInstant_followsExpiresAtNotAfterNow(
++      String name, Instant expiresAt, boolean expected) {
++    Link link = new Link("edge001", "https://example.com/edge", CREATED, expiresAt);
++
++    assertThat(link.isExpired(NOW)).as(name).isEqualTo(expected);
++  }
++
++  static Stream<Arguments> boundaryCases() {
++    return Stream.of(
++        Arguments.of(
++            "expiresAt exactly equal to now is expired (boundary is inclusive)", NOW, true),
++        Arguments.of("expiresAt one second before now is expired", NOW.minusSeconds(1), true),
++        Arguments.of("expiresAt one second after now is not expired", NOW.plusSeconds(1), false),
++        Arguments.of("expiresAt one nanosecond after now is not expired", NOW.plusNanos(1), false),
++        Arguments.of("null expiresAt never expires", null, false),
++        Arguments.of(
++            "far-future expiresAt is not expired", Instant.parse("9999-12-31T23:59:59Z"), false),
++        Arguments.of("far-past expiresAt is expired", Instant.parse("1970-01-01T00:00:00Z"), true));
++  }
++
++  @Test
++  void isExpired_nullExpiry_neverExpiresEvenAtTheEndOfTime() {
++    Link link = new Link("forever", "https://example.com/forever", CREATED, null);
++
++    assertThat(link.isExpired(Instant.MAX)).isFalse();
++  }
++
++  @Test
++  void isExpired_farFutureExpiry_staysLiveForDecadesOfClock() {
++    Link link =
++        new Link(
++            "decades",
++            "https://example.com/decades",
++            CREATED,
++            Instant.parse("2126-10-12T10:00:00Z"));
++
++    assertThat(link.isExpired(Instant.parse("2126-10-12T09:59:59Z"))).isFalse();
++    assertThat(link.isExpired(Instant.parse("2126-10-12T10:00:00Z"))).isTrue();
++  }
++
++  @Test
++  void isExpired_sameWallClockAcrossADaylightSavingFoldInBerlin_comparesAbsoluteInstants() {
++    // On 2026-10-25 Europe/Berlin repeats 02:30 local time: first at +02:00, then at +01:00.
++    ZoneId berlin = ZoneId.of("Europe/Berlin");
++    ZonedDateTime firstPass =
++        ZonedDateTime.of(2026, 10, 25, 2, 30, 0, 0, berlin).withEarlierOffsetAtOverlap();
++    ZonedDateTime secondPass = firstPass.withLaterOffsetAtOverlap();
++    assertThat(firstPass.toLocalDateTime()).isEqualTo(secondPass.toLocalDateTime());
++    Link link = new Link("dstfold", "https://example.com/dst", CREATED, firstPass.toInstant());
++
++    assertThat(link.isExpired(firstPass.toInstant())).isTrue();
++    assertThat(link.isExpired(secondPass.toInstant())).isTrue();
++    assertThat(link.isExpired(firstPass.minusSeconds(1).toInstant())).isFalse();
++    assertThat(secondPass.toInstant()).isEqualTo(firstPass.toInstant().plusSeconds(3600));
++  }
++
++  @Test
++  void isExpired_expiryGivenWithAnOffset_isTheSameInstantAsItsUtcForm() {
++    Instant fromOffset = OffsetDateTime.parse("2026-10-12T15:30:00+05:30").toInstant();
++    Link link = new Link("offset1", "https://example.com/offset", CREATED, fromOffset);
++
++    assertThat(fromOffset).isEqualTo(NOW);
++    assertThat(link.isExpired(NOW)).isTrue();
++    assertThat(link.isExpired(NOW.minusSeconds(1))).isFalse();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java
+index b8c997c..0c2b044 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java
+@@ -11,30 +11,30 @@ class LinkTest {
+ 
+   @Test
+   void equals_sameCodeDifferentUrlAndTime_areEqualWithSameHash() {
+-    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
+-    Link second = new Link("abcdefg", "https://example.org/two", CREATED.plusSeconds(60));
++    Link first = new Link("abcdefg", "https://example.com/one", CREATED, null);
++    Link second = new Link("abcdefg", "https://example.org/two", CREATED.plusSeconds(60), null);
+ 
+     assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
+   }
+ 
+   @Test
+   void equals_differentCode_areNotEqual() {
+-    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
+-    Link second = new Link("hijklmn", "https://example.com/one", CREATED);
++    Link first = new Link("abcdefg", "https://example.com/one", CREATED, null);
++    Link second = new Link("hijklmn", "https://example.com/one", CREATED, null);
+ 
+     assertThat(first).isNotEqualTo(second);
+   }
+ 
+   @Test
+   void equals_selfNullAndForeignType_isReflexiveAndRejectsOthers() {
+-    Link link = new Link("abcdefg", "https://example.com/one", CREATED);
++    Link link = new Link("abcdefg", "https://example.com/one", CREATED, null);
+ 
+     assertThat(link).isEqualTo(link).isNotEqualTo(null).isNotEqualTo("abcdefg");
+   }
+ 
+   @Test
+   void toString_neverContainsTheTargetUrl() {
+-    Link link = new Link("abcdefg", "https://secret.example.com/path?token=abc", CREATED);
++    Link link = new Link("abcdefg", "https://secret.example.com/path?token=abc", CREATED, null);
+ 
+     assertThat(link.toString())
+         .contains("abcdefg")
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+index 7163179..af3bc8a 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+@@ -101,6 +101,6 @@ class ClickEventRepositoryTest {
+ 
+   private Link saveLink(String code) {
+     return links.save(
+-        new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30))));
++        new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)), null));
+   }
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java
+index f5dd38c..d4cd9be 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java
+@@ -24,7 +24,7 @@ class LinkRepositoryTest {
+ 
+   @Test
+   void findByCode_knownCode_returnsTheLinkWithItsFields() {
+-    links.save(new Link("known01", "https://example.com/page", CREATED));
++    links.save(new Link("known01", "https://example.com/page", CREATED, null));
+ 
+     assertThat(links.findByCode("known01"))
+         .hasValueSatisfying(
+@@ -43,14 +43,14 @@ class LinkRepositoryTest {
+ 
+   @Test
+   void findByCode_differentCase_returnsEmptyBecauseCodesAreCaseSensitive() {
+-    links.save(new Link("CaseAbc", "https://example.com/case", CREATED));
++    links.save(new Link("CaseAbc", "https://example.com/case", CREATED, null));
+ 
+     assertThat(links.findByCode("caseabc")).isEmpty();
+   }
+ 
+   @Test
+   void existsByCode_knownAndUnknownCodes_reportPresence() {
+-    links.save(new Link("exists1", "https://example.com/e", CREATED));
++    links.save(new Link("exists1", "https://example.com/e", CREATED, null));
+ 
+     assertThat(links.existsByCode("exists1")).isTrue();
+     assertThat(links.existsByCode("exists2")).isFalse();
+@@ -58,7 +58,7 @@ class LinkRepositoryTest {
+ 
+   @Test
+   void deleteByCode_knownCode_removesTheRowAndReturnsOne() {
+-    links.save(new Link("delete1", "https://example.com/d", CREATED));
++    links.save(new Link("delete1", "https://example.com/d", CREATED, null));
+ 
+     long removed = links.deleteByCode("delete1");
+ 
+@@ -73,10 +73,10 @@ class LinkRepositoryTest {
+ 
+   @Test
+   void saveAndFlush_duplicateCode_throwsDataIntegrityViolationNamingTheConstraint() {
+-    links.saveAndFlush(new Link("twice01", "https://example.com/1", CREATED));
++    links.saveAndFlush(new Link("twice01", "https://example.com/1", CREATED, null));
+ 
+     assertThatThrownBy(
+-            () -> links.saveAndFlush(new Link("twice01", "https://example.com/2", CREATED)))
++            () -> links.saveAndFlush(new Link("twice01", "https://example.com/2", CREATED, null)))
+         .isInstanceOf(DataIntegrityViolationException.class)
+         .message()
+         .containsIgnoringCase("uk_links_code");
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+index 0116587..5315073 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+@@ -41,6 +41,29 @@ class MigrationTest {
+     assertThat(applied).isEqualTo(1);
+   }
+ 
++  @Test
++  void v2AddsNullableExpiresAt() {
++    Integer applied =
++        jdbc.queryForObject(
++            "select count(*) from flyway_schema_history where version = '2' and success = true",
++            Integer.class);
++    String nullable =
++        jdbc.queryForObject(
++            "select is_nullable from information_schema.columns "
++                + "where lower(table_name) = 'links' and lower(column_name) = 'expires_at'",
++            String.class);
++    String dataType =
++        jdbc.queryForObject(
++            "select data_type from information_schema.columns "
++                + "where lower(table_name) = 'links' and lower(column_name) = 'expires_at'",
++            String.class);
++
++    assertThat(applied).isEqualTo(1);
++    assertThat(nullable).isEqualTo("YES");
++    // H2 reports catalogue names in lower case under DATABASE_TO_LOWER; PostgreSQL would too.
++    assertThat(dataType).isEqualToIgnoringCase("TIMESTAMP WITH TIME ZONE");
++  }
++
+   @Test
+   void links_haveUniqueConstraintOnCode_namedUkLinksCode() {
+     Integer constraints =
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+index e81d16c..209619f 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+@@ -50,7 +50,7 @@ class AnalyticsServiceTest {
+ 
+     StatsResponse stats = service.stats("stats01");
+ 
+-    assertThat(stats).isEqualTo(new StatsResponse("stats01", 10L, 2L, 7L, lastClick));
++    assertThat(stats).isEqualTo(new StatsResponse("stats01", 10L, 2L, 7L, lastClick, null, false));
+   }
+ 
+   @Test
+@@ -61,7 +61,39 @@ class AnalyticsServiceTest {
+ 
+     StatsResponse stats = service.stats("quiet01");
+ 
+-    assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null));
++    assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null, null, false));
++  }
++
++  @Test
++  void stats_expiredLink_reportsExpiredTrueWithTheExpiryAndKeepsCountingItsClicks() {
++    Instant expiredAt = NOW.minus(Duration.ofMinutes(1));
++    Link expired = linkWithId("expired");
++    ReflectionTestUtils.setField(expired, "expiresAt", expiredAt);
++    when(links.findByCode("expired")).thenReturn(Optional.of(expired));
++    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
++        .thenReturn(new ClickSummary(5, 1, 3, NOW.minus(Duration.ofHours(2))));
++
++    StatsResponse stats = service.stats("expired");
++
++    assertThat(stats)
++        .isEqualTo(
++            new StatsResponse(
++                "expired", 5L, 1L, 3L, NOW.minus(Duration.ofHours(2)), expiredAt, true));
++  }
++
++  @Test
++  void stats_linkExpiringLater_reportsExpiredFalseWithTheExpiry() {
++    Instant expiresAt = NOW.plus(Duration.ofMinutes(1));
++    Link live = linkWithId("live001");
++    ReflectionTestUtils.setField(live, "expiresAt", expiresAt);
++    when(links.findByCode("live001")).thenReturn(Optional.of(live));
++    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
++        .thenReturn(new ClickSummary(0, 0, 0, null));
++
++    StatsResponse stats = service.stats("live001");
++
++    assertThat(stats.expired()).isFalse();
++    assertThat(stats.expiresAt()).isEqualTo(expiresAt);
+   }
+ 
+   @Test
+@@ -76,7 +108,7 @@ class AnalyticsServiceTest {
+   }
+ 
+   private static Link linkWithId(String code) {
+-    Link link = new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)));
++    Link link = new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)), null);
+     ReflectionTestUtils.setField(link, "id", LINK_ID);
+     return link;
+   }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java
+index cf19cac..ea24346 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java
+@@ -41,7 +41,7 @@ class LinkAllocatorTest {
+ 
+   @Test
+   void insert_newCode_commitsARowThatIsVisibleAfterTheCall() {
+-    Link inserted = allocator.insert("alloc01", "https://example.com/a", NOW);
++    Link inserted = allocator.insert("alloc01", "https://example.com/a", NOW, null);
+ 
+     assertThat(inserted.getId()).isNotNull();
+     assertThat(links.findByCode("alloc01"))
+@@ -52,11 +52,21 @@ class LinkAllocatorTest {
+             });
+   }
+ 
++  @Test
++  void insert_withExpiry_persistsTheExpiryInstantInTheNewColumn() {
++    Instant expiresAt = NOW.plusSeconds(86_400);
++
++    allocator.insert("expiry1", "https://example.com/e", NOW, expiresAt);
++
++    assertThat(links.findByCode("expiry1"))
++        .hasValueSatisfying(link -> assertThat(link.getExpiresAt()).isEqualTo(expiresAt));
++  }
++
+   @Test
+   void insert_duplicateCode_throwsDataIntegrityViolationNamingTheConstraintAndKeepsTheFirstRow() {
+-    allocator.insert("dupe001", "https://example.com/first", NOW);
++    allocator.insert("dupe001", "https://example.com/first", NOW, null);
+ 
+-    assertThatThrownBy(() -> allocator.insert("dupe001", "https://example.com/second", NOW))
++    assertThatThrownBy(() -> allocator.insert("dupe001", "https://example.com/second", NOW, null))
+         .isInstanceOf(DataIntegrityViolationException.class)
+         .message()
+         .containsIgnoringCase("uk_links_code");
+@@ -69,11 +79,11 @@ class LinkAllocatorTest {
+ 
+   @Test
+   void insert_afterAFailedAttempt_nextCodeStillCommitsBecauseEachAttemptIsItsOwnTransaction() {
+-    allocator.insert("retry01", "https://example.com/one", NOW);
+-    assertThatThrownBy(() -> allocator.insert("retry01", "https://example.com/two", NOW))
++    allocator.insert("retry01", "https://example.com/one", NOW, null);
++    assertThatThrownBy(() -> allocator.insert("retry01", "https://example.com/two", NOW, null))
+         .isInstanceOf(DataIntegrityViolationException.class);
+ 
+-    Link second = allocator.insert("retry02", "https://example.com/two", NOW);
++    Link second = allocator.insert("retry02", "https://example.com/two", NOW, null);
+ 
+     assertThat(second.getId()).isNotNull();
+     assertThat(links.existsByCode("retry02")).isTrue();
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java
+index cc07687..84aaa32 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java
+@@ -15,6 +15,7 @@ import dev.harshil.shortener.api.dto.CreateLinkRequest;
+ import dev.harshil.shortener.domain.AliasTakenException;
+ import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
+ import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkExpiredException;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+ import dev.harshil.shortener.domain.UrlValidationException;
+ import dev.harshil.shortener.domain.UrlValidationException.FieldError;
+@@ -36,6 +37,7 @@ import org.springframework.dao.DataIntegrityViolationException;
+ class LinkServiceTest {
+ 
+   private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++  private static final Instant FUTURE = NOW.plusSeconds(3600);
+   private static final String URL = "https://example.com/page";
+   private static final DataIntegrityViolationException CODE_COLLISION =
+       new DataIntegrityViolationException(
+@@ -64,22 +66,24 @@ class LinkServiceTest {
+   @Test
+   void create_withoutAlias_validatesCanonicalisesAndInsertsGeneratedCodeOnce() {
+     when(generator.next()).thenReturn("Abc1234");
+-    when(allocator.insert("Abc1234", URL, NOW)).thenReturn(new Link("Abc1234", URL, NOW));
++    when(allocator.insert("Abc1234", URL, NOW, null))
++        .thenReturn(new Link("Abc1234", URL, NOW, null));
+ 
+-    Link created = service.create(new CreateLinkRequest("HTTPS://EXAMPLE.COM/page", null));
++    Link created = service.create(new CreateLinkRequest("HTTPS://EXAMPLE.COM/page", null, null));
+ 
+     assertThat(created.getCode()).isEqualTo("Abc1234");
+-    verify(allocator, times(1)).insert(anyString(), anyString(), any());
++    verify(allocator, times(1)).insert(anyString(), anyString(), any(), any());
+     verifyNoInteractions(links);
+   }
+ 
+   @Test
+   void create_randomCodeCollides_retriesWithTheNextCode() {
+     when(generator.next()).thenReturn("taken01", "fresh02");
+-    when(allocator.insert("taken01", URL, NOW)).thenThrow(CODE_COLLISION);
+-    when(allocator.insert("fresh02", URL, NOW)).thenReturn(new Link("fresh02", URL, NOW));
++    when(allocator.insert("taken01", URL, NOW, null)).thenThrow(CODE_COLLISION);
++    when(allocator.insert("fresh02", URL, NOW, null))
++        .thenReturn(new Link("fresh02", URL, NOW, null));
+ 
+-    Link created = service.create(new CreateLinkRequest(URL, null));
++    Link created = service.create(new CreateLinkRequest(URL, null, null));
+ 
+     assertThat(created.getCode()).isEqualTo("fresh02");
+     verify(generator, times(2)).next();
+@@ -88,12 +92,13 @@ class LinkServiceTest {
+   @Test
+   void create_fiveRandomCollisions_throwsCodeGenerationExhaustedAfterExactlyFiveAttempts() {
+     when(generator.next()).thenReturn("col0001");
+-    when(allocator.insert(anyString(), anyString(), any())).thenThrow(CODE_COLLISION);
++    when(allocator.insert(anyString(), anyString(), any(), any())).thenThrow(CODE_COLLISION);
+ 
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null)))
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null, null)))
+         .isInstanceOf(CodeGenerationExhaustedException.class);
+ 
+-    verify(allocator, times(LinkService.MAX_ATTEMPTS)).insert(anyString(), anyString(), any());
++    verify(allocator, times(LinkService.MAX_ATTEMPTS))
++        .insert(anyString(), anyString(), any(), any());
+     assertThat(registry.counter(LinkService.LINKS_CREATED_METRIC).count()).isZero();
+   }
+ 
+@@ -102,19 +107,21 @@ class LinkServiceTest {
+     when(generator.next()).thenReturn("code001");
+     DataIntegrityViolationException other =
+         new DataIntegrityViolationException("NULL not allowed for column \"ORIGINAL_URL\"");
+-    when(allocator.insert(anyString(), anyString(), any())).thenThrow(other);
++    when(allocator.insert(anyString(), anyString(), any(), any())).thenThrow(other);
+ 
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null))).isSameAs(other);
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null, null)))
++        .isSameAs(other);
+ 
+-    verify(allocator, times(1)).insert(anyString(), anyString(), any());
++    verify(allocator, times(1)).insert(anyString(), anyString(), any(), any());
+   }
+ 
+   @Test
+   void create_withAlias_insertsTheAliasWithoutUsingTheGenerator() {
+     when(links.existsByCode("my-alias")).thenReturn(false);
+-    when(allocator.insert("my-alias", URL, NOW)).thenReturn(new Link("my-alias", URL, NOW));
++    when(allocator.insert("my-alias", URL, NOW, null))
++        .thenReturn(new Link("my-alias", URL, NOW, null));
+ 
+-    Link created = service.create(new CreateLinkRequest(URL, "my-alias"));
++    Link created = service.create(new CreateLinkRequest(URL, "my-alias", null));
+ 
+     assertThat(created.getCode()).isEqualTo("my-alias");
+     verifyNoInteractions(generator);
+@@ -122,7 +129,7 @@ class LinkServiceTest {
+ 
+   @Test
+   void create_reservedAlias_throwsUrlValidationOnCustomAliasBeforeTouchingTheDatabase() {
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "Admin")))
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "Admin", null)))
+         .isInstanceOfSatisfying(
+             UrlValidationException.class,
+             ex ->
+@@ -135,7 +142,7 @@ class LinkServiceTest {
+ 
+   @Test
+   void create_aliasFailingThePattern_throwsUrlValidationEvenWhenBeanValidationWasBypassed() {
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "ab")))
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "ab", null)))
+         .isInstanceOfSatisfying(
+             UrlValidationException.class,
+             ex ->
+@@ -150,11 +157,11 @@ class LinkServiceTest {
+   void create_aliasAlreadyStored_throwsAliasTakenWithoutAttemptingAnInsert() {
+     when(links.existsByCode("taken")).thenReturn(true);
+ 
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "taken")))
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "taken", null)))
+         .isInstanceOf(AliasTakenException.class)
+         .hasMessageContaining("taken");
+ 
+-    verify(allocator, never()).insert(anyString(), anyString(), any());
++    verify(allocator, never()).insert(anyString(), anyString(), any(), any());
+   }
+ 
+   @Test
+@@ -164,9 +171,9 @@ class LinkServiceTest {
+         new DataIntegrityViolationException(
+             "could not execute statement",
+             new SQLException("duplicate key value violates unique constraint \"uk_links_code\""));
+-    when(allocator.insert("raced", URL, NOW)).thenThrow(viaCause);
++    when(allocator.insert("raced", URL, NOW, null)).thenThrow(viaCause);
+ 
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "raced")))
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "raced", null)))
+         .isInstanceOf(AliasTakenException.class)
+         .hasCause(viaCause);
+   }
+@@ -175,14 +182,16 @@ class LinkServiceTest {
+   void create_aliasInsertFailsOnAnotherConstraint_propagatesTheOriginalException() {
+     when(links.existsByCode("alias1")).thenReturn(false);
+     DataIntegrityViolationException other = new DataIntegrityViolationException("check failed");
+-    when(allocator.insert("alias1", URL, NOW)).thenThrow(other);
++    when(allocator.insert("alias1", URL, NOW, null)).thenThrow(other);
+ 
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "alias1"))).isSameAs(other);
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, "alias1", null)))
++        .isSameAs(other);
+   }
+ 
+   @Test
+   void create_invalidUrl_throwsUrlValidationBeforeAnyCollaboratorIsCalled() {
+-    assertThatThrownBy(() -> service.create(new CreateLinkRequest("ftp://example.com/x", null)))
++    assertThatThrownBy(
++            () -> service.create(new CreateLinkRequest("ftp://example.com/x", null, null)))
+         .isInstanceOf(UrlValidationException.class);
+ 
+     verifyNoInteractions(links, allocator, generator);
+@@ -191,16 +200,82 @@ class LinkServiceTest {
+   @Test
+   void create_success_incrementsTheLinksCreatedCounterOnce() {
+     when(generator.next()).thenReturn("Abc1234");
+-    when(allocator.insert("Abc1234", URL, NOW)).thenReturn(new Link("Abc1234", URL, NOW));
++    when(allocator.insert("Abc1234", URL, NOW, null))
++        .thenReturn(new Link("Abc1234", URL, NOW, null));
+ 
+-    service.create(new CreateLinkRequest(URL, null));
++    service.create(new CreateLinkRequest(URL, null, null));
+ 
+     assertThat(registry.counter(LinkService.LINKS_CREATED_METRIC).count()).isEqualTo(1.0);
+   }
+ 
++  @Test
++  void create_expiresAtInTheFuture_passesItToTheAllocatorAndTheLinkCarriesIt() {
++    when(generator.next()).thenReturn("Abc1234");
++    when(allocator.insert("Abc1234", URL, NOW, FUTURE))
++        .thenReturn(new Link("Abc1234", URL, NOW, FUTURE));
++
++    Link created = service.create(new CreateLinkRequest(URL, null, FUTURE));
++
++    assertThat(created.getExpiresAt()).isEqualTo(FUTURE);
++    verify(allocator).insert("Abc1234", URL, NOW, FUTURE);
++  }
++
++  @Test
++  void create_expiresAtInThePast_throwsUrlValidationOnExpiresAtBeforeTouchingTheDatabase() {
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null, NOW.minusSeconds(1))))
++        .isInstanceOfSatisfying(
++            UrlValidationException.class,
++            ex ->
++                assertThat(ex.getErrors())
++                    .containsExactly(
++                        new FieldError(
++                            LinkService.EXPIRES_AT_FIELD, LinkService.MSG_EXPIRES_AT_PAST)));
++
++    verifyNoInteractions(links, allocator, generator);
++  }
++
++  @Test
++  void create_expiresAtEqualToNow_isRejectedBecauseExpiredMeansExpiresAtNotAfterNow() {
++    assertThatThrownBy(() -> service.create(new CreateLinkRequest(URL, null, NOW)))
++        .isInstanceOf(UrlValidationException.class);
++
++    verifyNoInteractions(allocator);
++  }
++
++  @Test
++  void resolve_expiredLink_throwsLinkExpiredCarryingTheCodeAndTheExpiry() {
++    Instant expiredAt = NOW.minusSeconds(1);
++    when(links.findByCode("expired"))
++        .thenReturn(Optional.of(new Link("expired", URL, NOW, expiredAt)));
++
++    assertThatThrownBy(() -> service.resolve("expired"))
++        .isInstanceOfSatisfying(
++            LinkExpiredException.class,
++            ex -> {
++              assertThat(ex.getCode()).isEqualTo("expired");
++              assertThat(ex.getExpiresAt()).isEqualTo(expiredAt);
++            });
++  }
++
++  @Test
++  void resolve_linkExpiringOneSecondLater_returnsIt() {
++    Link stored = new Link("soon001", URL, NOW, NOW.plusSeconds(1));
++    when(links.findByCode("soon001")).thenReturn(Optional.of(stored));
++
++    assertThat(service.resolve("soon001")).isSameAs(stored);
++  }
++
++  @Test
++  void get_expiredLink_stillReturnsItSoMetadataShowsTheExpiry() {
++    Link stored = new Link("expired", URL, NOW, NOW.minusSeconds(1));
++    when(links.findByCode("expired")).thenReturn(Optional.of(stored));
++
++    assertThat(service.get("expired")).isSameAs(stored);
++  }
++
+   @Test
+   void resolve_knownCode_returnsTheLink() {
+-    Link stored = new Link("known01", URL, NOW);
++    Link stored = new Link("known01", URL, NOW, null);
+     when(links.findByCode("known01")).thenReturn(Optional.of(stored));
+ 
+     assertThat(service.resolve("known01")).isSameAs(stored);
+@@ -217,7 +292,7 @@ class LinkServiceTest {
+ 
+   @Test
+   void get_knownCode_usesTheSameSingleLookupAsResolve() {
+-    Link stored = new Link("known01", URL, NOW);
++    Link stored = new Link("known01", URL, NOW, null);
+     when(links.findByCode("known01")).thenReturn(Optional.of(stored));
+ 
+     assertThat(service.get("known01")).isSameAs(stored);
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/support/MutableClock.java b/url-shortener/src/test/java/dev/harshil/shortener/support/MutableClock.java
+new file mode 100644
+index 0000000..56b26e2
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/support/MutableClock.java
+@@ -0,0 +1,52 @@
++package dev.harshil.shortener.support;
++
++import java.time.Clock;
++import java.time.Duration;
++import java.time.Instant;
++import java.time.ZoneId;
++import java.time.ZoneOffset;
++import java.util.concurrent.atomic.AtomicReference;
++
++/**
++ * A UTC clock that stands still until a test moves it. Registered as the primary {@code Clock} bean
++ * by {@code ExpiryIT} so create, redirect, metadata and stats all read one controllable "now",
++ * which lets a test create a link and then step past its expiry without sleeping.
++ */
++public final class MutableClock extends Clock {
++
++  private final AtomicReference<Instant> now;
++
++  /**
++   * Creates the clock.
++   *
++   * @param start the instant the clock reports until it is moved
++   */
++  public MutableClock(Instant start) {
++    this.now = new AtomicReference<>(start);
++  }
++
++  /** Sets the instant the clock reports. */
++  public void set(Instant instant) {
++    now.set(instant);
++  }
++
++  /** Moves the clock forward by the given duration. */
++  public void advance(Duration duration) {
++    now.updateAndGet(current -> current.plus(duration));
++  }
++
++  @Override
++  public ZoneId getZone() {
++    return ZoneOffset.UTC;
++  }
++
++  @Override
++  public Clock withZone(ZoneId zone) {
++    throw new UnsupportedOperationException("The test clock is UTC only");
++  }
++
++  @Override
++  public Instant instant() {
++    return now.get();
++  }
++}

@@ -35,7 +35,7 @@ class StatsControllerTest {
   void stats_knownCodeWithKey_returns200WithEveryField() {
     Instant lastClick = Instant.parse("2026-10-12T11:57:00Z");
     when(analyticsService.stats("abcdefg"))
-        .thenReturn(new StatsResponse("abcdefg", 10L, 2L, 7L, lastClick));
+        .thenReturn(new StatsResponse("abcdefg", 10L, 2L, 7L, lastClick, null, false));
 
     assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
         .hasStatusOk()
@@ -52,7 +52,7 @@ class StatsControllerTest {
   @Test
   void stats_linkNeverClicked_rendersNullLastClickedAtExplicitly() {
     when(analyticsService.stats("abcdefg"))
-        .thenReturn(new StatsResponse("abcdefg", 0L, 0L, 0L, null));
+        .thenReturn(new StatsResponse("abcdefg", 0L, 0L, 0L, null, null, false));
 
     assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
         .hasStatusOk()

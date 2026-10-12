@@ -14,7 +14,9 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -26,8 +28,9 @@ import org.springframework.stereotype.Component;
  * the authentication entry point and the exception handler are the same everywhere, so they are
  * added here once instead of being repeated in annotations that drift. Every error response points
  * at one shared {@code ProblemDetail} schema. Operations under {@code /api/} additionally get the
- * 401. A response an operation already declares for a status is left untouched, so an author can
- * still document a specific case.
+ * 401; the redirect operations under {@code /{code}} additionally get the 410. A response an
+ * operation already declares for a status is left untouched, so an author can still document a
+ * specific case.
  */
 @Component
 public class OpenApiErrorCustomizer implements OpenApiCustomizer {
@@ -37,8 +40,13 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
 
   static final String PROBLEM_MEDIA_TYPE = "application/problem+json";
   static final String UNAUTHORIZED = "401";
+  static final String GONE = "410";
 
   private static final String API_PREFIX = "/api/";
+
+  /** The redirect path as springdoc renders it, with the code pattern stripped. */
+  private static final String REDIRECT_PATH = "/{code}";
+
   private static final String SCHEMA_REF = "#/components/schemas/" + PROBLEM_SCHEMA;
   private static final String RETRY_AFTER_DESCRIPTION = "Seconds to wait before retrying";
 
@@ -64,6 +72,19 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
           HttpHeaders.WWW_AUTHENTICATE,
           "Challenge, always ApiKey realm=\"url-shortener\"");
 
+  private static final CatalogueEntry GONE_ENTRY =
+      new CatalogueEntry(
+          GONE,
+          "Link has expired; the row and its click history are kept",
+          HttpHeaders.CACHE_CONTROL,
+          "Always no-store");
+
+  /** The redirect's catalogue: the common entries plus the 410, kept in status order. */
+  private static final List<CatalogueEntry> REDIRECT_ENTRIES =
+      Stream.concat(COMMON_ENTRIES.stream(), Stream.of(GONE_ENTRY))
+          .sorted(Comparator.comparing(CatalogueEntry::status))
+          .toList();
+
   @Override
   public void customise(OpenAPI openApi) {
     components(openApi).addSchemas(PROBLEM_SCHEMA, problemSchema());
@@ -86,10 +107,14 @@ public class OpenApiErrorCustomizer implements OpenApiCustomizer {
       if (path.startsWith(API_PREFIX)) {
         responses.putIfAbsent(UNAUTHORIZED_ENTRY.status(), UNAUTHORIZED_ENTRY.toResponse());
       }
-      for (CatalogueEntry entry : COMMON_ENTRIES) {
+      for (CatalogueEntry entry : catalogueFor(path)) {
         responses.putIfAbsent(entry.status(), entry.toResponse());
       }
     }
+  }
+
+  private static List<CatalogueEntry> catalogueFor(String path) {
+    return REDIRECT_PATH.equals(path) ? REDIRECT_ENTRIES : COMMON_ENTRIES;
   }
 
   private static ApiResponses responsesOf(Operation operation) {

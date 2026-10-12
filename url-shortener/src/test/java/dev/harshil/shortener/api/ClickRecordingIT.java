@@ -49,7 +49,7 @@ class ClickRecordingIT {
 
   @Test
   void get_redirect_recordsExactlyOneClickForTheLinkAsynchronously() {
-    Link link = links.save(new Link("click01", "https://example.com/c", Instant.now()));
+    Link link = links.save(new Link("click01", "https://example.com/c", Instant.now(), null));
 
     client.get().uri("/click01").exchange().expectStatus().isFound();
 
@@ -61,7 +61,7 @@ class ClickRecordingIT {
 
   @Test
   void head_redirect_recordsNoClick() {
-    links.save(new Link("head001", "https://example.com/h", Instant.now()));
+    links.save(new Link("head001", "https://example.com/h", Instant.now(), null));
 
     client.head().uri("/head001").exchange().expectStatus().isFound();
     client.get().uri("/head001").exchange().expectStatus().isFound();
@@ -72,7 +72,7 @@ class ClickRecordingIT {
 
   @Test
   void get_redirect_whenTheInsertFails_stillReturns302AndCountsTheDrop() {
-    links.save(new Link("fail001", "https://example.com/f", Instant.now()));
+    links.save(new Link("fail001", "https://example.com/f", Instant.now(), null));
     doThrow(new DataAccessResourceFailureException("database gone"))
         .when(clickEvents)
         .save(any(ClickEvent.class));

@@ -40,7 +40,7 @@ class RedirectIT {
 
   @Test
   void get_knownCode_returns302WithStoredLocationAndNoStore() {
-    links.save(new Link("redir01", TARGET, Instant.now()));
+    links.save(new Link("redir01", TARGET, Instant.now(), null));
 
     client
         .get()
@@ -56,7 +56,7 @@ class RedirectIT {
 
   @Test
   void head_knownCode_returns302WithTheSameLocation() {
-    links.save(new Link("probe01", TARGET, Instant.now()));
+    links.save(new Link("probe01", TARGET, Instant.now(), null));
 
     client
         .head()

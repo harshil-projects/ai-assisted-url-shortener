@@ -24,7 +24,7 @@ class LinkRepositoryTest {
 
   @Test
   void findByCode_knownCode_returnsTheLinkWithItsFields() {
-    links.save(new Link("known01", "https://example.com/page", CREATED));
+    links.save(new Link("known01", "https://example.com/page", CREATED, null));
 
     assertThat(links.findByCode("known01"))
         .hasValueSatisfying(
@@ -43,14 +43,14 @@ class LinkRepositoryTest {
 
   @Test
   void findByCode_differentCase_returnsEmptyBecauseCodesAreCaseSensitive() {
-    links.save(new Link("CaseAbc", "https://example.com/case", CREATED));
+    links.save(new Link("CaseAbc", "https://example.com/case", CREATED, null));
 
     assertThat(links.findByCode("caseabc")).isEmpty();
   }
 
   @Test
   void existsByCode_knownAndUnknownCodes_reportPresence() {
-    links.save(new Link("exists1", "https://example.com/e", CREATED));
+    links.save(new Link("exists1", "https://example.com/e", CREATED, null));
 
     assertThat(links.existsByCode("exists1")).isTrue();
     assertThat(links.existsByCode("exists2")).isFalse();
@@ -58,7 +58,7 @@ class LinkRepositoryTest {
 
   @Test
   void deleteByCode_knownCode_removesTheRowAndReturnsOne() {
-    links.save(new Link("delete1", "https://example.com/d", CREATED));
+    links.save(new Link("delete1", "https://example.com/d", CREATED, null));
 
     long removed = links.deleteByCode("delete1");
 
@@ -73,10 +73,10 @@ class LinkRepositoryTest {
 
   @Test
   void saveAndFlush_duplicateCode_throwsDataIntegrityViolationNamingTheConstraint() {
-    links.saveAndFlush(new Link("twice01", "https://example.com/1", CREATED));
+    links.saveAndFlush(new Link("twice01", "https://example.com/1", CREATED, null));
 
     assertThatThrownBy(
-            () -> links.saveAndFlush(new Link("twice01", "https://example.com/2", CREATED)))
+            () -> links.saveAndFlush(new Link("twice01", "https://example.com/2", CREATED, null)))
         .isInstanceOf(DataIntegrityViolationException.class)
         .message()
         .containsIgnoringCase("uk_links_code");

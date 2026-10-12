@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.time.Clock;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -39,16 +40,20 @@ public class LinkController {
 
   private final LinkService links;
   private final ShortUrlBuilder shortUrls;
+  private final Clock clock;
 
   /**
    * Creates the controller.
    *
    * @param links link use cases
    * @param shortUrls short URL rendering
+   * @param clock application clock against which {@code expired} is computed when a response is
+   *     built
    */
-  public LinkController(LinkService links, ShortUrlBuilder shortUrls) {
+  public LinkController(LinkService links, ShortUrlBuilder shortUrls, Clock clock) {
     this.links = links;
     this.shortUrls = shortUrls;
+    this.clock = clock;
   }
 
   /**
@@ -68,7 +73,7 @@ public class LinkController {
   }
 
   /**
-   * Returns a link's metadata.
+   * Returns a link's metadata; an expired link is still returned, with {@code expired} true.
    *
    * @param code the short code
    * @return 200 with the link
@@ -94,6 +99,6 @@ public class LinkController {
   }
 
   private LinkResponse toResponse(Link link) {
-    return LinkResponse.of(link, shortUrls.shortUrl(link.getCode()));
+    return LinkResponse.of(link, shortUrls.shortUrl(link.getCode()), clock.instant());
   }
 }

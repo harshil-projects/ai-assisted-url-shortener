@@ -4,7 +4,7 @@ requirement: R-02
 activities: [implement]
 impact: high
 impact_reasons: [schema]
-status: todo
+status: in-progress
 depends_on: [T-101]
 intent: >
   Add the optional expiresAt to links through Flyway V2, validate it on create as RFC 3339 with an

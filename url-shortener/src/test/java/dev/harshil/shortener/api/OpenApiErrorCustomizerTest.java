@@ -42,7 +42,31 @@ class OpenApiErrorCustomizerTest {
 
     customizer.customise(openApi);
 
-    assertThat(redirect.getResponses().keySet()).containsExactly("400", "404", "429", "500", "503");
+    assertThat(redirect.getResponses().keySet())
+        .containsExactly("400", "404", "410", "429", "500", "503");
+  }
+
+  @Test
+  void customise_redirectOperations_get410WithNoStoreHeaderOnGetAndHead() {
+    Operation redirect = new Operation();
+    Operation probe = new Operation();
+    OpenAPI openApi = documentWith("/{code}", new PathItem().get(redirect).head(probe));
+
+    customizer.customise(openApi);
+
+    assertThat(redirect.getResponses().get("410").getHeaders())
+        .containsKey(HttpHeaders.CACHE_CONTROL);
+    assertThat(probe.getResponses().get("410").getHeaders()).containsKey(HttpHeaders.CACHE_CONTROL);
+  }
+
+  @Test
+  void customise_managementOperation_doesNotGet410() {
+    Operation lookup = new Operation();
+    OpenAPI openApi = documentWith("/api/v1/links/{code}", new PathItem().get(lookup));
+
+    customizer.customise(openApi);
+
+    assertThat(lookup.getResponses()).doesNotContainKey("410");
   }
 
   @Test

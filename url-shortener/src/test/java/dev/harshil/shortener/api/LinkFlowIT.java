@@ -41,7 +41,7 @@ class LinkFlowIT {
 
   @Test
   void create_validUrl_returns201WithLocationSevenCharacterCodeAndBody() {
-    create(new CreateLinkRequest("HTTPS://Example.COM/Landing?x=1", null))
+    create(new CreateLinkRequest("HTTPS://Example.COM/Landing?x=1", null, null))
         .expectStatus()
         .isCreated()
         .expectHeader()
@@ -63,7 +63,7 @@ class LinkFlowIT {
 
   @Test
   void create_customAlias_isHonouredAsTheCode() {
-    create(new CreateLinkRequest("https://example.com/alias", "my-Alias_1"))
+    create(new CreateLinkRequest("https://example.com/alias", "my-Alias_1", null))
         .expectStatus()
         .isCreated()
         .expectHeader()
@@ -75,7 +75,7 @@ class LinkFlowIT {
 
   @Test
   void create_reservedAlias_returns400ValidationFailedOnCustomAlias() {
-    create(new CreateLinkRequest("https://example.com/x", "actuator"))
+    create(new CreateLinkRequest("https://example.com/x", "actuator", null))
         .expectStatus()
         .isBadRequest()
         .expectHeader()
@@ -91,11 +91,11 @@ class LinkFlowIT {
 
   @Test
   void create_duplicateAlias_returns409AliasTaken() {
-    create(new CreateLinkRequest("https://example.com/one", "dupeAlias"))
+    create(new CreateLinkRequest("https://example.com/one", "dupeAlias", null))
         .expectStatus()
         .isCreated();
 
-    create(new CreateLinkRequest("https://example.com/two", "dupeAlias"))
+    create(new CreateLinkRequest("https://example.com/two", "dupeAlias", null))
         .expectStatus()
         .isEqualTo(409)
         .expectHeader()
@@ -109,7 +109,7 @@ class LinkFlowIT {
 
   @Test
   void create_invalidUrl_returns400WithUrlFieldError() {
-    create(new CreateLinkRequest("http://127.0.0.1/admin", null))
+    create(new CreateLinkRequest("http://127.0.0.1/admin", null, null))
         .expectStatus()
         .isBadRequest()
         .expectBody()
@@ -127,7 +127,7 @@ class LinkFlowIT {
         .post()
         .uri(LINKS)
         .contentType(MediaType.APPLICATION_JSON)
-        .body(new CreateLinkRequest("https://example.com/x", null))
+        .body(new CreateLinkRequest("https://example.com/x", null, null))
         .exchange()
         .expectStatus()
         .isUnauthorized()
@@ -204,7 +204,9 @@ class LinkFlowIT {
   void create_success_incrementsTheLinksCreatedCounter() {
     double before = registry.counter("shortener.links.created").count();
 
-    create(new CreateLinkRequest("https://example.com/counted", null)).expectStatus().isCreated();
+    create(new CreateLinkRequest("https://example.com/counted", null, null))
+        .expectStatus()
+        .isCreated();
 
     assertThat(registry.counter("shortener.links.created").count()).isEqualTo(before + 1);
   }
@@ -221,7 +223,7 @@ class LinkFlowIT {
 
   private String createAndReadCode(String url, String alias) {
     LinkResponse body =
-        create(new CreateLinkRequest(url, alias))
+        create(new CreateLinkRequest(url, alias, null))
             .expectStatus()
             .isCreated()
             .expectBody(LinkResponse.class)

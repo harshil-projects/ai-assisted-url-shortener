@@ -11,30 +11,30 @@ class LinkTest {
 
   @Test
   void equals_sameCodeDifferentUrlAndTime_areEqualWithSameHash() {
-    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
-    Link second = new Link("abcdefg", "https://example.org/two", CREATED.plusSeconds(60));
+    Link first = new Link("abcdefg", "https://example.com/one", CREATED, null);
+    Link second = new Link("abcdefg", "https://example.org/two", CREATED.plusSeconds(60), null);
 
     assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
   }
 
   @Test
   void equals_differentCode_areNotEqual() {
-    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
-    Link second = new Link("hijklmn", "https://example.com/one", CREATED);
+    Link first = new Link("abcdefg", "https://example.com/one", CREATED, null);
+    Link second = new Link("hijklmn", "https://example.com/one", CREATED, null);
 
     assertThat(first).isNotEqualTo(second);
   }
 
   @Test
   void equals_selfNullAndForeignType_isReflexiveAndRejectsOthers() {
-    Link link = new Link("abcdefg", "https://example.com/one", CREATED);
+    Link link = new Link("abcdefg", "https://example.com/one", CREATED, null);
 
     assertThat(link).isEqualTo(link).isNotEqualTo(null).isNotEqualTo("abcdefg");
   }
 
   @Test
   void toString_neverContainsTheTargetUrl() {
-    Link link = new Link("abcdefg", "https://secret.example.com/path?token=abc", CREATED);
+    Link link = new Link("abcdefg", "https://secret.example.com/path?token=abc", CREATED, null);
 
     assertThat(link.toString())
         .contains("abcdefg")

@@ -18,6 +18,10 @@ import java.util.Objects;
  * exception message never reveals where a link points (design 3.5, NFR-05). The entity has no
  * setters: a link is immutable after creation, and the database cascade, not an entity collection,
  * removes its click events when it is deleted.
+ *
+ * <p>A link may carry an optional absolute expiry (design 3.6, brownfield). The row is never
+ * removed when it passes; {@link #isExpired(Instant)} is evaluated lazily against the application
+ * clock wherever the distinction matters.
  */
 @Entity
 @Table(name = "links")
@@ -36,6 +40,9 @@ public class Link {
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;
 
+  @Column(name = "expires_at")
+  private Instant expiresAt;
+
   /** JPA only; Hibernate populates the fields reflectively. */
   protected Link() {}
 
@@ -45,11 +52,14 @@ public class Link {
    * @param code the unique short code, already validated by the service
    * @param originalUrl the canonical target URL, already validated by the service
    * @param createdAt the creation instant from the application clock
+   * @param expiresAt the instant from which the link no longer redirects, already checked to be in
+   *     the future by the service; {@code null} means the link never expires
    */
-  public Link(String code, String originalUrl, Instant createdAt) {
+  public Link(String code, String originalUrl, Instant createdAt, Instant expiresAt) {
     this.code = code;
     this.originalUrl = originalUrl;
     this.createdAt = createdAt;
+    this.expiresAt = expiresAt;
   }
 
   public Long getId() {
@@ -66,6 +76,25 @@ public class Link {
 
   public Instant getCreatedAt() {
     return createdAt;
+  }
+
+  /** Returns the expiry instant, or {@code null} when the link never expires. */
+  public Instant getExpiresAt() {
+    return expiresAt;
+  }
+
+  /**
+   * Tells whether the link has expired at the given instant. The boundary is inclusive: a link
+   * whose {@code expiresAt} equals {@code now} is already expired, so "expired" means {@code
+   * expiresAt <= now}. Instants are compared on the absolute time line, so offsets and daylight
+   * saving changes play no part.
+   *
+   * @param now the current instant from the application clock
+   * @return true when an expiry is set and it is not after {@code now}; a link without expiry is
+   *     never expired
+   */
+  public boolean isExpired(Instant now) {
+    return expiresAt != null && !expiresAt.isAfter(now);
   }
 
   @Override
@@ -87,6 +116,14 @@ public class Link {
   /** Omits the target URL on purpose; see the class comment. */
   @Override
   public String toString() {
-    return "Link{id=" + id + ", code=" + code + ", createdAt=" + createdAt + "}";
+    return "Link{id="
+        + id
+        + ", code="
+        + code
+        + ", createdAt="
+        + createdAt
+        + ", expiresAt="
+        + expiresAt
+        + "}";
   }
 }

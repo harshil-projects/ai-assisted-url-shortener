@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.harshil.shortener.api.dto.CreateLinkRequest;
 import dev.harshil.shortener.domain.AliasTakenException;
 import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
+import dev.harshil.shortener.domain.LinkExpiredException;
 import dev.harshil.shortener.domain.LinkNotFoundException;
 import dev.harshil.shortener.domain.UrlValidationException;
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +70,22 @@ class ApiExceptionHandlerTest {
         .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
     assertStandard(response.getBody(), ProblemTypes.LINK_NOT_FOUND, "Link not found");
     assertThat(response.getBody().getDetail()).isEqualTo("No link with code abcdefg");
+  }
+
+  @Test
+  void handleLinkExpired_mapsTo410LinkExpiredWithNoStoreAndNoTargetUrl() {
+    Instant expiredAt = Instant.parse("2026-10-12T09:00:00Z");
+
+    ResponseEntity<ProblemDetail> response =
+        handler.handleLinkExpired(new LinkExpiredException("abcdefg", expiredAt));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(410);
+    assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+    assertThat(response.getHeaders().getContentType())
+        .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+    assertStandard(response.getBody(), ProblemTypes.LINK_EXPIRED, "Link has expired");
+    assertThat(response.getBody().getDetail())
+        .isEqualTo("Link abcdefg expired at 2026-10-12T09:00:00Z");
   }
 
   @Test
@@ -204,7 +222,7 @@ class ApiExceptionHandlerTest {
   void handleException_methodArgumentNotValid_mapsTo400WithFieldErrorsSortedByField()
       throws Exception {
     BeanPropertyBindingResult binding =
-        new BeanPropertyBindingResult(new CreateLinkRequest("", "ab"), "createLinkRequest");
+        new BeanPropertyBindingResult(new CreateLinkRequest("", "ab", null), "createLinkRequest");
     binding.addError(new FieldError("createLinkRequest", "url", "URL is required"));
     binding.addError(new FieldError("createLinkRequest", "customAlias", "Alias is too short"));
     MethodParameter parameter =

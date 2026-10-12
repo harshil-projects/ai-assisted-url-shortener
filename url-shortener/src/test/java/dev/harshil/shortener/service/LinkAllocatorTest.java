@@ -41,7 +41,7 @@ class LinkAllocatorTest {
 
   @Test
   void insert_newCode_commitsARowThatIsVisibleAfterTheCall() {
-    Link inserted = allocator.insert("alloc01", "https://example.com/a", NOW);
+    Link inserted = allocator.insert("alloc01", "https://example.com/a", NOW, null);
 
     assertThat(inserted.getId()).isNotNull();
     assertThat(links.findByCode("alloc01"))
@@ -53,10 +53,20 @@ class LinkAllocatorTest {
   }
 
   @Test
-  void insert_duplicateCode_throwsDataIntegrityViolationNamingTheConstraintAndKeepsTheFirstRow() {
-    allocator.insert("dupe001", "https://example.com/first", NOW);
+  void insert_withExpiry_persistsTheExpiryInstantInTheNewColumn() {
+    Instant expiresAt = NOW.plusSeconds(86_400);
 
-    assertThatThrownBy(() -> allocator.insert("dupe001", "https://example.com/second", NOW))
+    allocator.insert("expiry1", "https://example.com/e", NOW, expiresAt);
+
+    assertThat(links.findByCode("expiry1"))
+        .hasValueSatisfying(link -> assertThat(link.getExpiresAt()).isEqualTo(expiresAt));
+  }
+
+  @Test
+  void insert_duplicateCode_throwsDataIntegrityViolationNamingTheConstraintAndKeepsTheFirstRow() {
+    allocator.insert("dupe001", "https://example.com/first", NOW, null);
+
+    assertThatThrownBy(() -> allocator.insert("dupe001", "https://example.com/second", NOW, null))
         .isInstanceOf(DataIntegrityViolationException.class)
         .message()
         .containsIgnoringCase("uk_links_code");
@@ -69,11 +79,11 @@ class LinkAllocatorTest {
 
   @Test
   void insert_afterAFailedAttempt_nextCodeStillCommitsBecauseEachAttemptIsItsOwnTransaction() {
-    allocator.insert("retry01", "https://example.com/one", NOW);
-    assertThatThrownBy(() -> allocator.insert("retry01", "https://example.com/two", NOW))
+    allocator.insert("retry01", "https://example.com/one", NOW, null);
+    assertThatThrownBy(() -> allocator.insert("retry01", "https://example.com/two", NOW, null))
         .isInstanceOf(DataIntegrityViolationException.class);
 
-    Link second = allocator.insert("retry02", "https://example.com/two", NOW);
+    Link second = allocator.insert("retry02", "https://example.com/two", NOW, null);
 
     assertThat(second.getId()).isNotNull();
     assertThat(links.existsByCode("retry02")).isTrue();

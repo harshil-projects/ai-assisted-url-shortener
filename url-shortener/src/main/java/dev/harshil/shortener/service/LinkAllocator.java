@@ -36,12 +36,14 @@ public class LinkAllocator {
    * @param code the code to claim
    * @param url the canonical target URL
    * @param now the creation instant
+   * @param expiresAt the expiry instant, already validated by the caller, or {@code null} for a
+   *     link that never expires
    * @return the persisted link with its identifier
    * @throws org.springframework.dao.DataIntegrityViolationException when {@code code} is already
    *     stored; the message names the {@code uk_links_code} constraint
    */
   @Transactional
-  public Link insert(String code, String url, Instant now) {
-    return links.saveAndFlush(new Link(code, url, now));
+  public Link insert(String code, String url, Instant now, Instant expiresAt) {
+    return links.saveAndFlush(new Link(code, url, now, expiresAt));
   }
 }

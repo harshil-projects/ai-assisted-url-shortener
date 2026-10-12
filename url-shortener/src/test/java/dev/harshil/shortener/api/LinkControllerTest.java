@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.harshil.shortener.api.dto.CreateLinkRequest;
+import dev.harshil.shortener.config.ClockConfig;
 import dev.harshil.shortener.config.SecurityConfig;
 import dev.harshil.shortener.domain.AliasTakenException;
 import dev.harshil.shortener.domain.CodeGenerationExhaustedException;
@@ -33,7 +34,7 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester.MockMvcRequest
  * bodies produced through the shared handler. The service is mocked; the real security chain runs.
  */
 @WebMvcTest(LinkController.class)
-@Import({SecurityConfig.class, ShortUrlBuilder.class})
+@Import({SecurityConfig.class, ShortUrlBuilder.class, ClockConfig.class})
 @TestProfile
 class LinkControllerTest {
 
@@ -41,14 +42,14 @@ class LinkControllerTest {
   private static final String API_KEY = "test-api-key";
   private static final String LINKS = "/api/v1/links";
   private static final Instant CREATED = Instant.parse("2026-10-12T10:00:00Z");
-  private static final Link LINK = new Link("abcdefg", "https://example.com/page", CREATED);
+  private static final Link LINK = new Link("abcdefg", "https://example.com/page", CREATED, null);
 
   @Autowired private MockMvcTester mvc;
   @MockitoBean private LinkService linkService;
 
   @Test
   void create_validBodyWithKey_returns201WithLocationAndLinkBody() {
-    when(linkService.create(new CreateLinkRequest("https://example.com/page", null)))
+    when(linkService.create(new CreateLinkRequest("https://example.com/page", null, null)))
         .thenReturn(LINK);
 
     assertThat(post("{\"url\":\"https://example.com/page\"}"))
