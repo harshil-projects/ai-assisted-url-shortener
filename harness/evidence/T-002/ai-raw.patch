@@ -1,0 +1,611 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java
+new file mode 100644
+index 0000000..f8f16a5
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java
+@@ -0,0 +1,63 @@
++package dev.harshil.shortener.domain;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.GeneratedValue;
++import jakarta.persistence.GenerationType;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import java.time.Instant;
++
++/**
++ * One recorded redirect of a link.
++ *
++ * <p>{@code linkId} is a plain column rather than a relationship so recording a click is a single
++ * {@code INSERT} with no preceding {@code SELECT} (design 3.5). The row carries nothing about the
++ * visitor: no address, no user agent (ADR 0006). Equality is left as identity because two clicks on
++ * the same link at the same instant are two distinct events.
++ */
++@Entity
++@Table(name = "click_events")
++public class ClickEvent {
++
++  @Id
++  @GeneratedValue(strategy = GenerationType.IDENTITY)
++  private Long id;
++
++  @Column(name = "link_id", nullable = false)
++  private Long linkId;
++
++  @Column(name = "occurred_at", nullable = false)
++  private Instant occurredAt;
++
++  /** JPA only; Hibernate populates the fields reflectively. */
++  protected ClickEvent() {}
++
++  /**
++   * Creates an event ready to be persisted.
++   *
++   * @param linkId identifier of the link that was followed
++   * @param occurredAt the instant the redirect was served, from the application clock
++   */
++  public ClickEvent(Long linkId, Instant occurredAt) {
++    this.linkId = linkId;
++    this.occurredAt = occurredAt;
++  }
++
++  public Long getId() {
++    return id;
++  }
++
++  public Long getLinkId() {
++    return linkId;
++  }
++
++  public Instant getOccurredAt() {
++    return occurredAt;
++  }
++
++  @Override
++  public String toString() {
++    return "ClickEvent{id=" + id + ", linkId=" + linkId + ", occurredAt=" + occurredAt + "}";
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java
+new file mode 100644
+index 0000000..731954a
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java
+@@ -0,0 +1,92 @@
++package dev.harshil.shortener.domain;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.GeneratedValue;
++import jakarta.persistence.GenerationType;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import java.time.Instant;
++import java.util.Objects;
++
++/**
++ * A short link: the code clients follow and the validated target it resolves to.
++ *
++ * <p>Equality is defined by {@code code}, which is unique in the database and the only identity
++ * clients ever see; the surrogate {@code id} exists for the foreign key from click events. {@link
++ * #toString()} deliberately omits the target URL so an entity that lands in a log line or an
++ * exception message never reveals where a link points (design 3.5, NFR-05). The entity has no
++ * setters: a link is immutable after creation, and the database cascade, not an entity collection,
++ * removes its click events when it is deleted.
++ */
++@Entity
++@Table(name = "links")
++public class Link {
++
++  @Id
++  @GeneratedValue(strategy = GenerationType.IDENTITY)
++  private Long id;
++
++  @Column(name = "code", nullable = false, length = 32, unique = true)
++  private String code;
++
++  @Column(name = "original_url", nullable = false, length = 2048)
++  private String originalUrl;
++
++  @Column(name = "created_at", nullable = false)
++  private Instant createdAt;
++
++  /** JPA only; Hibernate populates the fields reflectively. */
++  protected Link() {}
++
++  /**
++   * Creates a link ready to be persisted; the identifier is assigned by the database.
++   *
++   * @param code the unique short code, already validated by the service
++   * @param originalUrl the canonical target URL, already validated by the service
++   * @param createdAt the creation instant from the application clock
++   */
++  public Link(String code, String originalUrl, Instant createdAt) {
++    this.code = code;
++    this.originalUrl = originalUrl;
++    this.createdAt = createdAt;
++  }
++
++  public Long getId() {
++    return id;
++  }
++
++  public String getCode() {
++    return code;
++  }
++
++  public String getOriginalUrl() {
++    return originalUrl;
++  }
++
++  public Instant getCreatedAt() {
++    return createdAt;
++  }
++
++  @Override
++  public boolean equals(Object other) {
++    if (this == other) {
++      return true;
++    }
++    if (!(other instanceof Link link)) {
++      return false;
++    }
++    return Objects.equals(code, link.code);
++  }
++
++  @Override
++  public int hashCode() {
++    return Objects.hashCode(code);
++  }
++
++  /** Omits the target URL on purpose; see the class comment. */
++  @Override
++  public String toString() {
++    return "Link{id=" + id + ", code=" + code + ", createdAt=" + createdAt + "}";
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java
+new file mode 100644
+index 0000000..86d2f8c
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java
+@@ -0,0 +1,39 @@
++package dev.harshil.shortener.repository;
++
++import dev.harshil.shortener.domain.ClickEvent;
++import java.time.Instant;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.jpa.repository.Query;
++import org.springframework.data.repository.query.Param;
++
++/**
++ * Append-only persistence for {@link ClickEvent} plus the one aggregate the stats endpoint needs.
++ */
++public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
++
++  /**
++   * Computes every stats figure for a link in one statement. The windowed counts use {@code sum}
++   * over a {@code case} rather than separate {@code count} queries so the index is scanned once,
++   * and {@code coalesce} turns the {@code null} that {@code sum} yields for an empty link into 0.
++   * {@code max} stays {@code null} on purpose: "never clicked" is a real answer.
++   *
++   * @param linkId the link to summarise
++   * @param since24h inclusive lower bound of the 24-hour window, computed by the caller's clock
++   * @param since7d inclusive lower bound of the 7-day window, computed by the caller's clock
++   * @return the totals; never {@code null}
++   */
++  @Query(
++      """
++      select new dev.harshil.shortener.repository.ClickSummary(
++          count(e),
++          coalesce(sum(case when e.occurredAt >= :since24h then 1L else 0L end), 0L),
++          coalesce(sum(case when e.occurredAt >= :since7d then 1L else 0L end), 0L),
++          max(e.occurredAt))
++      from ClickEvent e
++      where e.linkId = :linkId
++      """)
++  ClickSummary summarize(
++      @Param("linkId") Long linkId,
++      @Param("since24h") Instant since24h,
++      @Param("since7d") Instant since7d);
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickSummary.java b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickSummary.java
+new file mode 100644
+index 0000000..d8573f7
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickSummary.java
+@@ -0,0 +1,14 @@
++package dev.harshil.shortener.repository;
++
++import java.time.Instant;
++
++/**
++ * Aggregate of one link's clicks produced by a single query over the {@code (link_id, occurred_at)}
++ * index (design 3.6).
++ *
++ * @param total every recorded click
++ * @param last24h clicks at or after the 24-hour boundary supplied by the caller
++ * @param last7d clicks at or after the 7-day boundary supplied by the caller
++ * @param lastClickedAt the most recent click, or {@code null} when the link was never followed
++ */
++public record ClickSummary(long total, long last24h, long last7d, Instant lastClickedAt) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/repository/LinkRepository.java b/url-shortener/src/main/java/dev/harshil/shortener/repository/LinkRepository.java
+new file mode 100644
+index 0000000..ad8ae89
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/repository/LinkRepository.java
+@@ -0,0 +1,26 @@
++package dev.harshil.shortener.repository;
++
++import dev.harshil.shortener.domain.Link;
++import java.util.Optional;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.transaction.annotation.Transactional;
++
++/** Persistence for {@link Link}; every lookup is by the unique code clients present. */
++public interface LinkRepository extends JpaRepository<Link, Long> {
++
++  Optional<Link> findByCode(String code);
++
++  boolean existsByCode(String code);
++
++  /**
++   * Removes the link with the given code; the database cascade removes its click events.
++   *
++   * <p>Declared read-write explicitly: a derived delete loads then removes the entity, which
++   * requires a writable transaction, and the repository default for query methods is read-only.
++   *
++   * @param code the code to delete
++   * @return the number of links removed, 0 or 1
++   */
++  @Transactional
++  long deleteByCode(String code);
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java
+new file mode 100644
+index 0000000..b8c997c
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java
+@@ -0,0 +1,45 @@
++package dev.harshil.shortener.domain;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import java.time.Instant;
++import org.junit.jupiter.api.Test;
++
++class LinkTest {
++
++  private static final Instant CREATED = Instant.parse("2026-10-12T09:30:00Z");
++
++  @Test
++  void equals_sameCodeDifferentUrlAndTime_areEqualWithSameHash() {
++    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
++    Link second = new Link("abcdefg", "https://example.org/two", CREATED.plusSeconds(60));
++
++    assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
++  }
++
++  @Test
++  void equals_differentCode_areNotEqual() {
++    Link first = new Link("abcdefg", "https://example.com/one", CREATED);
++    Link second = new Link("hijklmn", "https://example.com/one", CREATED);
++
++    assertThat(first).isNotEqualTo(second);
++  }
++
++  @Test
++  void equals_selfNullAndForeignType_isReflexiveAndRejectsOthers() {
++    Link link = new Link("abcdefg", "https://example.com/one", CREATED);
++
++    assertThat(link).isEqualTo(link).isNotEqualTo(null).isNotEqualTo("abcdefg");
++  }
++
++  @Test
++  void toString_neverContainsTheTargetUrl() {
++    Link link = new Link("abcdefg", "https://secret.example.com/path?token=abc", CREATED);
++
++    assertThat(link.toString())
++        .contains("abcdefg")
++        .contains(CREATED.toString())
++        .doesNotContain("secret.example.com")
++        .doesNotContain("token");
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+new file mode 100644
+index 0000000..7163179
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+@@ -0,0 +1,106 @@
++package dev.harshil.shortener.repository;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.domain.ClickEvent;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Duration;
++import java.time.Instant;
++import javax.sql.DataSource;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
++import org.springframework.jdbc.core.JdbcTemplate;
++import org.springframework.transaction.annotation.Propagation;
++import org.springframework.transaction.annotation.Transactional;
++
++@DataJpaTest
++@AutoConfigureTestDatabase(replace = Replace.NONE)
++@TestProfile
++class ClickEventRepositoryTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T12:00:00Z");
++  private static final Instant SINCE_24H = NOW.minus(Duration.ofHours(24));
++  private static final Instant SINCE_7D = NOW.minus(Duration.ofDays(7));
++
++  @Autowired private ClickEventRepository clickEvents;
++  @Autowired private LinkRepository links;
++  @Autowired private DataSource dataSource;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void summarize_eventsInsideAndOutsideEachWindow_countsTotalWindowsAndLastClick() {
++    Link link = saveLink("summary1");
++    clickEvents.save(new ClickEvent(link.getId(), NOW.minus(Duration.ofHours(1))));
++    clickEvents.save(new ClickEvent(link.getId(), NOW.minus(Duration.ofDays(2))));
++    clickEvents.save(new ClickEvent(link.getId(), NOW.minus(Duration.ofDays(10))));
++
++    ClickSummary summary = clickEvents.summarize(link.getId(), SINCE_24H, SINCE_7D);
++
++    assertThat(summary).isEqualTo(new ClickSummary(3, 1, 2, NOW.minus(Duration.ofHours(1))));
++  }
++
++  @Test
++  void summarize_eventExactlyOnWindowBoundary_isCountedInsideTheWindow() {
++    Link link = saveLink("boundary");
++    clickEvents.save(new ClickEvent(link.getId(), SINCE_24H));
++    clickEvents.save(new ClickEvent(link.getId(), SINCE_7D));
++
++    ClickSummary summary = clickEvents.summarize(link.getId(), SINCE_24H, SINCE_7D);
++
++    assertThat(summary.total()).isEqualTo(2);
++    assertThat(summary.last24h()).isEqualTo(1);
++    assertThat(summary.last7d()).isEqualTo(2);
++  }
++
++  @Test
++  void summarize_linkWithoutEvents_returnsZerosAndNullLastClick() {
++    Link link = saveLink("noclick");
++
++    ClickSummary summary = clickEvents.summarize(link.getId(), SINCE_24H, SINCE_7D);
++
++    assertThat(summary).isEqualTo(new ClickSummary(0, 0, 0, null));
++  }
++
++  @Test
++  void summarize_eventsOfAnotherLink_areNotCounted() {
++    Link counted = saveLink("counted");
++    Link other = saveLink("otherln");
++    clickEvents.save(new ClickEvent(counted.getId(), NOW.minus(Duration.ofMinutes(5))));
++    clickEvents.save(new ClickEvent(other.getId(), NOW.minus(Duration.ofMinutes(1))));
++
++    ClickSummary summary = clickEvents.summarize(counted.getId(), SINCE_24H, SINCE_7D);
++
++    assertThat(summary).isEqualTo(new ClickSummary(1, 1, 1, NOW.minus(Duration.ofMinutes(5))));
++  }
++
++  @Test
++  @Transactional(propagation = Propagation.NOT_SUPPORTED)
++  void deleteLink_throughJdbc_cascadesToItsClickEvents() {
++    Link link = saveLink("cascade");
++    clickEvents.save(new ClickEvent(link.getId(), NOW.minus(Duration.ofMinutes(1))));
++    clickEvents.save(new ClickEvent(link.getId(), NOW.minus(Duration.ofMinutes(2))));
++    assertThat(clickEvents.count()).isEqualTo(2);
++
++    int removed =
++        new JdbcTemplate(dataSource).update("delete from links where id = ?", link.getId());
++
++    assertThat(removed).isEqualTo(1);
++    assertThat(clickEvents.count()).isZero();
++    assertThat(links.existsByCode("cascade")).isFalse();
++  }
++
++  private Link saveLink(String code) {
++    return links.save(
++        new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30))));
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java
+new file mode 100644
+index 0000000..f5dd38c
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java
+@@ -0,0 +1,84 @@
++package dev.harshil.shortener.repository;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
++import org.springframework.dao.DataIntegrityViolationException;
++
++@DataJpaTest
++@AutoConfigureTestDatabase(replace = Replace.NONE)
++@TestProfile
++class LinkRepositoryTest {
++
++  private static final Instant CREATED = Instant.parse("2026-10-12T09:30:00Z");
++
++  @Autowired private LinkRepository links;
++
++  @Test
++  void findByCode_knownCode_returnsTheLinkWithItsFields() {
++    links.save(new Link("known01", "https://example.com/page", CREATED));
++
++    assertThat(links.findByCode("known01"))
++        .hasValueSatisfying(
++            link -> {
++              assertThat(link.getId()).isNotNull();
++              assertThat(link.getCode()).isEqualTo("known01");
++              assertThat(link.getOriginalUrl()).isEqualTo("https://example.com/page");
++              assertThat(link.getCreatedAt()).isEqualTo(CREATED);
++            });
++  }
++
++  @Test
++  void findByCode_unknownCode_returnsEmpty() {
++    assertThat(links.findByCode("missing")).isEmpty();
++  }
++
++  @Test
++  void findByCode_differentCase_returnsEmptyBecauseCodesAreCaseSensitive() {
++    links.save(new Link("CaseAbc", "https://example.com/case", CREATED));
++
++    assertThat(links.findByCode("caseabc")).isEmpty();
++  }
++
++  @Test
++  void existsByCode_knownAndUnknownCodes_reportPresence() {
++    links.save(new Link("exists1", "https://example.com/e", CREATED));
++
++    assertThat(links.existsByCode("exists1")).isTrue();
++    assertThat(links.existsByCode("exists2")).isFalse();
++  }
++
++  @Test
++  void deleteByCode_knownCode_removesTheRowAndReturnsOne() {
++    links.save(new Link("delete1", "https://example.com/d", CREATED));
++
++    long removed = links.deleteByCode("delete1");
++
++    assertThat(removed).isEqualTo(1);
++    assertThat(links.existsByCode("delete1")).isFalse();
++  }
++
++  @Test
++  void deleteByCode_unknownCode_returnsZero() {
++    assertThat(links.deleteByCode("nothing")).isZero();
++  }
++
++  @Test
++  void saveAndFlush_duplicateCode_throwsDataIntegrityViolationNamingTheConstraint() {
++    links.saveAndFlush(new Link("twice01", "https://example.com/1", CREATED));
++
++    assertThatThrownBy(
++            () -> links.saveAndFlush(new Link("twice01", "https://example.com/2", CREATED)))
++        .isInstanceOf(DataIntegrityViolationException.class)
++        .message()
++        .containsIgnoringCase("uk_links_code");
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+new file mode 100644
+index 0000000..0116587
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+@@ -0,0 +1,88 @@
++package dev.harshil.shortener.repository;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import dev.harshil.shortener.support.TestProfile;
++import java.util.List;
++import javax.sql.DataSource;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
++import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
++import org.springframework.jdbc.core.JdbcTemplate;
++
++/**
++ * Proves migration V1 through the database catalogue rather than through Hibernate, so the named
++ * constraints and the index the design relies on (3.5) exist exactly as written.
++ */
++@DataJpaTest
++@AutoConfigureTestDatabase(replace = Replace.NONE)
++@TestProfile
++class MigrationTest {
++
++  @Autowired private DataSource dataSource;
++
++  private JdbcTemplate jdbc;
++
++  @BeforeEach
++  void createTemplate() {
++    jdbc = new JdbcTemplate(dataSource);
++  }
++
++  @Test
++  void flywayHistory_versionOne_isAppliedSuccessfully() {
++    Integer applied =
++        jdbc.queryForObject(
++            "select count(*) from flyway_schema_history where version = '1' and success = true",
++            Integer.class);
++
++    assertThat(applied).isEqualTo(1);
++  }
++
++  @Test
++  void links_haveUniqueConstraintOnCode_namedUkLinksCode() {
++    Integer constraints =
++        jdbc.queryForObject(
++            "select count(*) from information_schema.table_constraints "
++                + "where lower(constraint_name) = 'uk_links_code' "
++                + "and constraint_type = 'UNIQUE' and lower(table_name) = 'links'",
++            Integer.class);
++
++    assertThat(constraints).isEqualTo(1);
++  }
++
++  @Test
++  void clickEvents_haveForeignKeyToLinks_namedFkClickEventsLink_withCascadeDelete() {
++    String deleteRule =
++        jdbc.queryForObject(
++            "select rc.delete_rule from information_schema.referential_constraints rc "
++                + "where lower(rc.constraint_name) = 'fk_click_events_link'",
++            String.class);
++
++    assertThat(deleteRule).isEqualTo("CASCADE");
++  }
++
++  @Test
++  void clickEvents_haveIndexOnLinkIdAndOccurredAt_namedIxClickEventsLinkTime() {
++    List<String> columns =
++        jdbc.queryForList(
++            "select lower(column_name) from information_schema.index_columns "
++                + "where lower(index_name) = 'ix_click_events_link_time' order by ordinal_position",
++            String.class);
++
++    assertThat(columns).containsExactly("link_id", "occurred_at");
++  }
++
++  @Test
++  void clickEvents_storeNoVisitorData_onlyIdLinkIdAndOccurredAt() {
++    List<String> columns =
++        jdbc.queryForList(
++            "select lower(column_name) from information_schema.columns "
++                + "where lower(table_name) = 'click_events' order by ordinal_position",
++            String.class);
++
++    assertThat(columns).containsExactly("id", "link_id", "occurred_at");
++  }
++}
