@@ -1,0 +1,18 @@
+# Line endings: LF in the repository and on checkout, except Windows scripts,
+# which Windows tooling expects as CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Raw AI output patches under harness/evidence/ must stay byte-exact so they
+# still apply; never normalise them.
+*.patch -text
+
+# Binary files are never normalised or diffed as text.
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary
+*.jar binary
+*.pdf binary

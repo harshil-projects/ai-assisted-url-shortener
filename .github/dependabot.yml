@@ -1,0 +1,20 @@
+# Weekly dependency updates. Minor and patch bumps arrive grouped to keep the
+# pull request count low. Majors arrive one per pull request so each can be
+# reviewed and signed off; a dependency change is high impact under the
+# harness policy.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

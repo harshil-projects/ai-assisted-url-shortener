@@ -1,0 +1,37 @@
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+
+# The assignment brief and other documents must never be committed
+*.pdf
+*.docx
+
+# Build output
+target/
+url-shortener/target/
+harness-check/target/
+
+# Local H2 database written by the dev profile
+data/
+*.mv.db
+*.trace.db
+
+# Per-machine AI tool settings. The shared .claude/settings.json IS tracked.
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs. Gate logs under harness/evidence/ ARE tracked on purpose: they are the
+# evidence that the quality gates ran, including the red runs. The negation
+# after the blanket rule re-includes them.
+*.log
+!harness/evidence/**/*.log
