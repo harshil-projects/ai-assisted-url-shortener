@@ -832,7 +832,7 @@ Dates and blocks assume AI drafting with mandatory review of every diff and the 
 | 2 evening | T-103, T-104, T-105 | Regression and docs, refactor, defect fix; fresh-clone check 2 | Brownfield scenario doc complete |
 | 3 morning | T-201, T-202, T-203 | Clarification, implementation, tests and docs | Ambiguous scenario doc complete |
 | 3 afternoon | Docs | Architecture, execution approach, testing, risks, final summary, ADRs 0008 and 0009, remaining harness-check rules if time, traceability snapshot, fresh-clone transcript, tag `v0.1.0` | Reviewer path proven end to end; CI green |
-| 3 evening | Rehearsal | From private notes outside the repository | Engineer can defend every decision unaided |
+| 3 evening | Final walkthrough | Engineer re-reads every decision record, the ledger and the evidence | Engineer can defend every decision unaided |
 
 Descoping ladder, applied in order if a block slips: T-104 becomes a tech-debt note; T-203 folds into T-202; T-103 folds into T-102; the perf smoke test is dropped and NFR-02 becomes "no performance claims"; T-010 becomes a short manual review; harness-check stays at the minimal rule set.
 
@@ -856,7 +856,7 @@ Descoping ladder, applied in order if a block slips: T-104 becomes a tech-debt n
 | RK-12 | Deleted alias can be re-registered by another party | M | M | Accept in greenfield | Risk recorded; candidate for T-105 only if surfaced as a defect | Not applicable |
 | RK-13 | Perf smoke test flaky on CI runners | M | L | Mitigate | Opt-in profile, generous threshold, warm-up, Ubuntu job only | Spurious failures |
 | RK-14 | Ledger backfilled from memory, uniform timestamps, one voice | M | H | Mitigate | Scripts write timestamps and logs; raw patches captured before review; prompts committed before use | Report shows identical timestamps |
-| RK-15 | Engineer cannot defend a decision live | L | H | Mitigate | Nine ADRs with alternatives; private rehearsal notes | Not applicable |
+| RK-15 | Engineer cannot defend a decision live | L | H | Mitigate | Nine ADRs with alternatives; the engineer's own walkthrough of each record before presenting | Not applicable |
 | RK-16 | Swagger UI blank under CSP or no way to set the API key | M | M | Mitigate | CSP scoped and relaxed for Swagger paths; `@SecurityScheme` for the Authorize button; checked in a browser on day 1 | Blank page |
 
 ---
@@ -921,9 +921,9 @@ Accepted risks are listed in `docs/threat-model.md` with an owner.
 
 ---
 
-## 11. Private engineer notes
+## 11. Engineer preparation
 
-Interview rehearsal material, likely questions, and the three ledger stories to memorise live outside the repository so the evaluators do not read them. The design records only that the day 3 evening is reserved for rehearsal.
+The repository records decisions and evidence only. Before presenting the work the engineer re-reads the decision records, the ledger and the review artifacts so that every choice can be explained unaided.
 
 ---
 
@@ -961,5 +961,5 @@ Full URLs for every reference are retained in the research digests and carried i
 | Sign-off narrowed to schema, security, dependency, data deletion and tied to a review artifact | Brief-fit and feasibility reviews |
 | Cuts: Error Prone, Gatling, OWASP dependency-check, enforcer convergence, JSpecify, idempotency key, redirect rate limit, IETF draft headers, JSON Schema files, per-edit format hook, ECS logging test | Feasibility and technical reviews |
 | Plan re-sequenced to eighteen tasks with a descoping ladder; toolchain proof and README rewrite moved to tonight; minimal harness-check before the first task commit | Feasibility and brief-fit reviews |
-| Firm name and brief quotations removed; interview material moved outside the repository | Brief-fit review |
+| Firm name and brief quotations removed from the repository | Brief-fit review |
 | ADR 0003 now records the Redis counter design from the common interview treatment as a considered alternative with the switch condition | Engineer's comparison request |

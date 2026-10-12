@@ -26,7 +26,7 @@ Likelihood and impact are H, M, or L. Response is one of Mitigate, Eliminate, Ac
 | RK-12 | Deleted alias can be re-registered by another party | M | M | Accept in greenfield | Risk recorded; candidate for T-105 only if surfaced as a defect | Not applicable |
 | RK-13 | Perf smoke test flaky on CI runners | M | L | Mitigate | Opt-in profile, generous threshold, warm-up, Ubuntu job only | Spurious failures |
 | RK-14 | Ledger backfilled from memory, uniform timestamps, one voice | M | H | Mitigate | Scripts write timestamps and logs; raw patches captured before review; prompts committed before use | Report shows identical timestamps |
-| RK-15 | Engineer cannot defend a decision live | L | H | Mitigate | Nine ADRs with alternatives; private rehearsal notes outside the repository | Not applicable |
+| RK-15 | Engineer cannot defend a decision live | L | H | Mitigate | Nine ADRs with alternatives; the engineer's own walkthrough of each record before presenting | Not applicable |
 | RK-16 | Swagger UI blank under CSP or no way to set the API key | M | M | Mitigate | CSP scoped and relaxed for Swagger paths; `@SecurityScheme` for the Authorize button; checked in a browser on day 1 | Blank page |
 
 ## Risks that materialised during the build
