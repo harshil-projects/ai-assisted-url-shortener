@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement]
 impact: high
 impact_reasons: [data-deletion]
-status: in-progress
+status: done
 depends_on: [T-005]
 intent: >
   Complete the management API: GET metadata, GET stats computed by one aggregate query over the
