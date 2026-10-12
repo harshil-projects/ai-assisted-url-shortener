@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,18 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Component
 public class ProblemWriter {
+
+  /** The hardening headers Spring Security's header writer adds to every response (design 3.3). */
+  private static final Map<String, String> SECURITY_HEADERS =
+      Map.of(
+          "X-Content-Type-Options",
+          "nosniff",
+          "X-Frame-Options",
+          "DENY",
+          "Referrer-Policy",
+          "no-referrer",
+          HttpHeaders.CACHE_CONTROL,
+          "no-store");
 
   private final JsonMapper jsonMapper;
 
@@ -43,6 +56,11 @@ public class ProblemWriter {
    * Writes the problem and the given headers, for example {@code Retry-After} or {@code
    * WWW-Authenticate}.
    *
+   * <p>Also sets {@code X-Content-Type-Options}, {@code X-Frame-Options}, {@code Referrer-Policy}
+   * and {@code Cache-Control: no-store} when absent, because {@code RequestSizeFilter} and {@code
+   * RateLimitFilter} run before Spring Security's header writer, so their 413 and 429 responses
+   * would otherwise go out without them.
+   *
    * @param response the response to write to; ignored if already committed
    * @param problem the problem body
    * @param headers headers to set before the body
@@ -57,9 +75,16 @@ public class ProblemWriter {
     response.resetBuffer();
     response.setStatus(problem.getStatus());
     headers.forEach(response::setHeader);
+    SECURITY_HEADERS.forEach((name, value) -> setWhenAbsent(response, name, value));
     response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
     response.setCharacterEncoding(StandardCharsets.UTF_8.name());
     jsonMapper.writeValue(response.getOutputStream(), ProblemDetails.toMap(problem));
     response.flushBuffer();
+  }
+
+  private static void setWhenAbsent(HttpServletResponse response, String name, String value) {
+    if (!response.containsHeader(name)) {
+      response.setHeader(name, value);
+    }
   }
 }

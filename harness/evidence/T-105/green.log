@@ -1,0 +1,120 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ----------------< dev.harshil.shortener:url-shortener >-----------------
+[INFO] Building url-shortener 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-environment) @ url-shortener ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.BanDuplicatePomDependencyVersions passed
+[INFO] 
+[INFO] --- spotless:3.10.4:check (spotless-check) @ url-shortener ---
+[INFO] Spotless.Java is keeping 93 files clean - 0 needs changes to be clean, 1 were already clean, 92 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- dependency:3.10.0:properties (mockito-agent-path) @ url-shortener ---
+[INFO] 
+[INFO] --- jacoco:0.8.15:prepare-agent (jacoco-prepare-agent) @ url-shortener ---
+[INFO] Skipping JaCoCo execution because property jacoco.skip is set.
+[INFO] 
+[INFO] --- spring-boot:4.1.1:build-info (build-info) @ url-shortener ---
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ url-shortener ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ url-shortener ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 46 source files with javac [debug parameters release 21] to target\classes
+[INFO] /C:/Users/Dell/ai-workspace/agentic-sdlc-url-shortener/.claude/worktrees/agent-aa6b9d987edaa4a0f/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java: C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\.claude\worktrees\agent-aa6b9d987edaa4a0f\url-shortener\src\main\java\dev\harshil\shortener\api\OpenApiErrorCustomizer.java uses unchecked or unsafe operations.
+[INFO] /C:/Users/Dell/ai-workspace/agentic-sdlc-url-shortener/.claude/worktrees/agent-aa6b9d987edaa4a0f/url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ url-shortener ---
+[INFO] Copying 1 resource from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ url-shortener ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 47 source files with javac [debug parameters release 21] to target\test-classes
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ url-shortener ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running dev.harshil.shortener.config.FilterResponseHeadersRegressionTest
+10:28:15.678 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.FilterResponseHeadersRegressionTest]: FilterResponseHeadersRegressionTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+10:28:16.782 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.FilterResponseHeadersRegressionTest
+10:28:17.166 [main] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [dev.harshil.shortener.config.FilterResponseHeadersRegressionTest]: FilterResponseHeadersRegressionTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+10:28:17.179 [main] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration dev.harshil.shortener.UrlShortenerApplication for test class dev.harshil.shortener.config.FilterResponseHeadersRegressionTest
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v4.1.1)
+
+2026-10-12T10:28:18.550+05:30  INFO 7308 --- [url-shortener] [           main] .s.c.FilterResponseHeadersRegressionTest : Starting FilterResponseHeadersRegressionTest using Java 21.0.12.1 with PID 7308 (started by Dell in C:\Users\Dell\ai-workspace\agentic-sdlc-url-shortener\.claude\worktrees\agent-aa6b9d987edaa4a0f\url-shortener)
+2026-10-12T10:28:18.553+05:30  INFO 7308 --- [url-shortener] [           main] .s.c.FilterResponseHeadersRegressionTest : The following 1 profile is active: "test"
+2026-10-12T10:28:24.800+05:30  INFO 7308 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-12T10:28:25.001+05:30  INFO 7308 --- [url-shortener] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 166 ms. Found 2 JPA repository interfaces.
+2026-10-12T10:28:29.421+05:30  INFO 7308 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat initialized with port 0 (http)
+2026-10-12T10:28:29.467+05:30  INFO 7308 --- [url-shortener] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-12T10:28:29.468+05:30  INFO 7308 --- [url-shortener] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/11.0.24]
+2026-10-12T10:28:29.731+05:30  INFO 7308 --- [url-shortener] [           main] b.w.c.s.WebApplicationContextInitializer : Root WebApplicationContext: initialization completed in 11124 ms
+2026-10-12T10:28:32.733+05:30  INFO 7308 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-12T10:28:33.860+05:30  INFO 7308 --- [url-shortener] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:urlshortener-cb563606-c41f-46c6-a351-0276ab9a19a2 user=SA
+2026-10-12T10:28:33.872+05:30  INFO 7308 --- [url-shortener] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-12T10:28:33.927+05:30  INFO 7308 --- [url-shortener] [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:urlshortener-cb563606-c41f-46c6-a351-0276ab9a19a2 (H2 2.4)
+2026-10-12T10:28:34.205+05:30  WARN 7308 --- [url-shortener] [           main] o.f.c.internal.database.base.Database    : Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.
+2026-10-12T10:28:34.372+05:30  INFO 7308 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "public"."flyway_schema_history" does not exist yet
+2026-10-12T10:28:34.378+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbValidate     : Successfully validated 3 migrations (execution time 00:00.072s)
+2026-10-12T10:28:34.414+05:30  INFO 7308 --- [url-shortener] [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "public"."flyway_schema_history" ...
+2026-10-12T10:28:34.559+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Current version of schema "public": << Empty Schema >>
+2026-10-12T10:28:34.616+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "1 - create links and click events"
+2026-10-12T10:28:34.681+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "2 - add link expiry"
+2026-10-12T10:28:34.734+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "3 - add click attribution"
+2026-10-12T10:28:34.810+05:30  INFO 7308 --- [url-shortener] [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 3 migrations to schema "public", now at version v3 (execution time 00:00.106s)
+2026-10-12T10:28:35.153+05:30  INFO 7308 --- [url-shortener] [           main] org.hibernate.orm.jpa                    : HHH008540: Processing PersistenceUnitInfo [name: default]
+2026-10-12T10:28:35.585+05:30  INFO 7308 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000001: Hibernate ORM core version 7.4.5.Final
+2026-10-12T10:28:38.529+05:30  INFO 7308 --- [url-shortener] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-12T10:28:38.958+05:30  INFO 7308 --- [url-shortener] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [jdbc:h2:mem:urlshortener-cb563606-c41f-46c6-a351-0276ab9a19a2]
+	Database driver: H2 JDBC Driver
+	Database dialect: H2Dialect
+	Database version: 2.4.240
+	Default catalog/schema: urlshortener-cb563606-c41f-46c6-a351-0276ab9a19a2/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: 100
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-12T10:28:45.204+05:30  INFO 7308 --- [url-shortener] [           main] org.hibernate.orm.core                   : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-12T10:28:45.489+05:30  INFO 7308 --- [url-shortener] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-12T10:28:46.079+05:30  INFO 7308 --- [url-shortener] [           main] o.s.d.j.r.query.QueryEnhancerFactories   : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-10-12T10:29:01.310+05:30  INFO 7308 --- [url-shortener] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 4 endpoints beneath base path '/actuator'
+2026-10-12T10:29:01.548+05:30  INFO 7308 --- [url-shortener] [           main] o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 57533 (http) with context path '/'
+2026-10-12T10:29:01.601+05:30  INFO 7308 --- [url-shortener] [           main] .s.c.FilterResponseHeadersRegressionTest : Started FilterResponseHeadersRegressionTest in 44.144 seconds (process running for 51.262)
+2026-10-12T10:29:01.872+05:30  WARN 7308 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /v3/api-docs endpoint is enabled by default. To disable it in production, set the property 'springdoc.api-docs.enabled=false'
+2026-10-12T10:29:01.873+05:30  WARN 7308 --- [url-shortener] [           main] o.s.core.events.SpringDocAppInitializer  : SpringDoc /swagger-ui.html endpoint is enabled by default. To disable it in production, set the property 'springdoc.swagger-ui.enabled=false'
+2026-10-12T10:29:03.116+05:30  INFO 7308 --- [url-shortener] [o-auto-1-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-12T10:29:03.117+05:30  INFO 7308 --- [url-shortener] [o-auto-1-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-12T10:29:03.123+05:30  INFO 7308 --- [url-shortener] [o-auto-1-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 6 ms
+2026-10-12T10:29:04.024+05:30  INFO 7308 --- [url-shortener] [o-auto-1-exec-2] d.harshil.shortener.service.LinkService  : Created link code=43vmzuF host=example.com
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 49.65 s -- in dev.harshil.shortener.config.FilterResponseHeadersRegressionTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:31 min
+[INFO] Finished at: 2026-10-12T10:29:05+05:30
+[INFO] ------------------------------------------------------------------------

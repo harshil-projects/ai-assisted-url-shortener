@@ -82,4 +82,4 @@ OpenAPI export is byte-identical; SpotBugs stayed at zero.
 
 ## Still open
 
-T-105 waits for the T-010 fresh-context review to name a real defect.
+Nothing. T-105 fixed the hardening-header defect named by the T-010 review with a failing-first regression test (`harness/reviews/T-105.md`); the remaining review candidates are follow-ups in `docs/risks-and-limitations.md`.

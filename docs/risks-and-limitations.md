@@ -46,6 +46,27 @@ Taken from the `debug` entries in `harness/ledger.yaml`; each has a hypothesis, 
 | T-008 | springdoc documented 200 for operations returning 201, 204 and 302 | RK-16 | Explicit `@ResponseStatus` and `@ApiResponse`; export regenerated; drift test guards it | ledger T-008 debug |
 | T-007 | Boot 4 moved `SecurityProperties.DEFAULT_FILTER_ORDER` and renamed `PAYLOAD_TOO_LARGE` | RK-02 | Boot 4 names used; recorded in `AGENTS.md` gotchas | ledger T-007 debug |
 
+## Follow-ups from the fresh-context review (T-010)
+
+`harness/reviews/greenfield-review.md` judged 30 candidates. The hardening-header defect became
+T-105. The other candidates marked real are accepted as open follow-ups, each with a reproduction
+note in the review:
+
+| # | Follow-up | Severity |
+|---|---|---|
+| 1 | Map `CannotCreateTransactionException` (pool timeout inside a transaction) to the 503 Problem, not 500 | should-fix |
+| 2 | Clear the global API-key requirement on the public redirect operations in the OpenAPI export | note |
+| 4 | Make the OpenAPI error catalogue per operation (409, 413, 415 on create; 429 only where the limiter applies) | should-fix |
+| 5 | One Problem shape for `instance` between filter-written and handler-written bodies; add the handler case to `ProblemDetailIT` | should-fix |
+| 8 | Emit `X-RateLimit-Reset` on every create or document it as 429-only | note |
+| 13 | Add the real-database collision and alias-race tests the task specs name | should-fix |
+| 15 | Make the OpenAPI drift test fail, not skip, when the committed export is missing | note |
+| 20 | Decide whether key guessing on read endpoints is throttled, or narrow the claim | should-fix, security |
+| 22 | Block `*.localhost` names in the URL validator | should-fix, security |
+| 26 | Render firewall rejections and `/error` as Problem Details | note, security |
+| 28 | Use a bulk `@Modifying` delete so two concurrent deletes yield 204 and 404, never 500 | should-fix, data-deletion |
+| 29 | Prove the click executor thread and the saturation drop with tests | note |
+
 ## Limitations found while building
 
 | Area | Limitation | Trade-off accepted | What production would do |

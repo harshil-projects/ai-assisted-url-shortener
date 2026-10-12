@@ -158,6 +158,9 @@ class AttributionIT {
         .valueEquals(HttpHeaders.LOCATION, TARGET)
         .expectHeader()
         .valueEquals(HttpHeaders.CACHE_CONTROL, "no-store");
+
+    // The click is recorded asynchronously; wait for it so it cannot leak into the next test.
+    awaitClicks(1);
   }
 
   private void awaitClicks(long expected) {

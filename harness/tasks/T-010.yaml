@@ -4,7 +4,7 @@ requirement: R-01
 activities: [review-prep]
 impact: normal
 impact_reasons: []
-status: todo
+status: in-progress
 depends_on: [T-009]
 intent: >
   Run the review-prep playbook in a fresh context over the finished greenfield code and the task

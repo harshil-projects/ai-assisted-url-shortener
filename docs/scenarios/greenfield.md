@@ -644,35 +644,4 @@ output was treated as a suggestion, reviewed, tested and understood before it wa
 
 ## Still open
 
-T-009 (status `todo` in its spec) is the close-out task this document belongs to. Delivered in the
-drafting session that produced this file, pending the engineer's review:
-[`RedirectLatencySmokeTest`](../../url-shortener/src/test/java/dev/harshil/shortener/perf/RedirectLatencySmokeTest.java),
-this document, and [`docs/fresh-clone-transcript.md`](../fresh-clone-transcript.md). Not yet done
-at `e8d098f`, from the task spec and the definition of done:
-
-- Gate records. `harness/evidence/T-003/`, `T-004/`, `T-005/`, `T-006/` and `T-008/` hold a raw
-  patch but no `verify-N.log`, and T-002 has only a red run; the ledger therefore has no passing gate
-  record for those six tasks and their specs cannot be set to `done` without failing HC-04. The
-  fresh-clone build and CI prove the tree is green; the per-task records still have to be appended
-  with `scripts/gate.ps1 T-NNN`.
-- A ledger entry, raw snapshot and gate record (`scripts/gate.ps1 T-009 -Perf`) for T-009 itself,
-  and the three task specs set to `done` in the order gate, done, commit.
-- `docs/reports/traceability.md`: `docs/reports/` holds only `.gitkeep`; `scripts/report.ps1` copies
-  the generated report and fills the kept ratios the README cites; `docs/engineering-summary.md`,
-  which the README also lists, does not exist yet either.
-- The "filled at submission" rows of [`docs/testing.md`](../testing.md) (test counts by layer,
-  coverage, p99), for which the figures above are the source.
-- ADRs 0001 to 0007 exist under [`docs/decisions/`](../decisions/); the spec asks for them to be
-  finalised against the code, which is an engineer re-read with no artifact of its own beyond the
-  commit.
-- The engineer's own browser check of Swagger UI with the Authorize button, dated here.
-
-T-010 (status `todo`) is the fresh-context review of the finished greenfield code. Its prompt is
-committed before use at `f4657dc` ([`harness/prompts/T-010/v1.md`](../../harness/prompts/T-010/v1.md));
-the review has not run and `harness/reviews/greenfield-review.md` does not exist yet. Its output,
-the defect-candidate list with the engineer's verdicts, is the input to T-105 in the brownfield
-scenario. Two candidates are already on record for it: the three defect candidates in
-[`harness/reviews/T-007.md`](../../harness/reviews/T-007.md), and the missing security headers on
-the pre-chain 429 observed in [`docs/fresh-clone-transcript.md`](../fresh-clone-transcript.md); the
-413 from `RequestSizeFilter` runs before the chain too and should be checked for the same gap, which
-the transcript did not exercise.
+T-009 and T-010 are done: the perf smoke test, this document and the fresh-clone transcript landed with T-009; the fresh-context review is `harness/reviews/greenfield-review.md` (30 candidates, each with a verdict and reason), its one fixed defect is T-105 and its other real candidates are follow-ups in `docs/risks-and-limitations.md`.

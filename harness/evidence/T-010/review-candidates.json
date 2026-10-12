@@ -1,0 +1,302 @@
+[
+ {
+  "title": "Database outage answers 500 about:blank, not the designed 503 with Retry-After",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java",
+  "line": 125,
+  "expected": "Design 3.6/3.13, R-01 and api.md: when the database cannot be reached within the 2 s Hikari timeout, create, redirect, metadata, stats and delete respond 503 /problems/service-unavailable with Retry-After: 5.",
+  "actual": "The handler maps only DataAccessResourceFailureException and CannotGetJdbcConnectionException. Every repository call runs inside a Spring Data transaction (SimpleJpaRepository is @Transactional(readOnly = true); LinkAllocator.insert, LinkService.delete and AnalyticsService.stats are @Transactional), so a connection-acquisition failure surfaces from JpaTransactionManager.doBegin as CannotCreateTransactionException (\"Could not open JPA EntityManager for transaction\"), which extends TransactionException, not DataAccessException. It falls through to handleUnexpected (line 149) and the client gets 500 about:blank with no Retry-After. The only tests of the 503 path hand-throw DataAccessResourceFailureException (ApiExceptionHandlerTest, LinkControllerTest.create_databaseUnavailable_returns503WithRetryAfterFive); nothing exercises a real unavailable pool.",
+  "reproduction": "Write an IT with @MockitoSpyBean DataSource and doThrow(new SQLTransientConnectionException(\"timeout\")).when(dataSource).getConnection(), then GET /{knownCode} and POST /api/v1/links; assert 503 and Retry-After 5. Or start the service with spring.datasource.url pointing at a closed port. Code trace: LinkService.resolve -> repository proxy TransactionInterceptor -> JpaTransactionManager.doBegin catch(Throwable) -> CannotCreateTransactionException (verified present in spring-orm-7.0.9.jar; CannotCreateTransactionException extends TransactionException in spring-tx-7.0.9.jar) -> ApiExceptionHandler.handleUnexpected.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "OpenAPI export marks the public redirect GET/HEAD /{code} as requiring the API key",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java",
+  "line": 81,
+  "expected": "Design 3.3 lists GET /{code} and HEAD /{code} with Auth 'none'; the committed contract should show these operations without the ApiKey requirement (T-008: document the API honestly; OpenApiConfig's own description says redirects are public).",
+  "actual": "RedirectController uses @Operation(security = {}) on redirect() and probe(). An empty array is the annotation default, so springdoc treats it as unspecified and does not emit a per-operation `security: []`; the global `security: - ApiKey: []` (openapi.yaml lines 13-14) therefore applies. docs/reference/openapi.yaml has no `security` key anywhere under `/{code}` (lines 295-405), so client generators and Swagger UI (lock icon, X-API-Key sent on try-it-out) treat the redirect as authenticated. springdoc clears security per operation only through an empty @SecurityRequirements annotation.",
+  "reproduction": "grep -n security docs/reference/openapi.yaml: only lines 13 and 494 match, none under /{code}. Open /swagger-ui.html and observe the padlock on 'Follow a short link'. Write a test asserting runtime JSON path $.paths['/{code}'].get.security == [] and watch it fail.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "api.md documents expiry features (expiresAt, expired, 410 link-expired) the service does not implement",
+  "file": "docs/reference/api.md",
+  "line": 15,
+  "expected": "T-008 constraint: api.md is derived from the code and tests; do not invent features. R-01 and design 3.3 scope expiry to the brownfield scenario (R-02) and mark it '(brownfield)'; the current service has no expiresAt input, no expired flag and never returns 410.",
+  "actual": "api.md drops the brownfield qualifier and states as current behaviour: POST accepts `expiresAt` (line 15), GET/HEAD /{code} return 410 expired (lines 16-17), `expiresAt` must be in the future and zoneless strings are rejected (line 31), LinkResponse carries expiresAt/expired (line 37), StatsResponse carries expiresAt/expired (line 38), Cache-Control is set on 410 (line 51), and the catalogue row /problems/link-expired is 'handler'-produced (line 70). In code CreateLinkRequest has only url and customAlias, LinkResponse has 4 fields, StatsResponse 5, ProblemTypes.LINK_EXPIRED is never raised and no handler maps 410. Because Jackson 3 ignores unknown properties, a client following api.md sends expiresAt and gets 201 with no expiry at all instead of the documented 400. The committed openapi.yaml (LinkResponse lines 420-431, CreateLinkRequest 408-419) contradicts api.md on the same page set.",
+  "reproduction": "curl -X POST /api/v1/links -H 'X-API-Key: dev-only-key-do-not-use' -H 'Content-Type: application/json' -d '{\"url\":\"https://example.com\",\"expiresAt\":\"2020-01-01T00:00:00Z\"}' -> 201 and the redirect works; api.md says a past value is rejected and that GET /api/v1/links/{code} returns expiresAt/expired, which are absent from the body. Diff api.md lines 37-38 against openapi.yaml components.schemas.LinkResponse/StatsResponse.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "OpenAPI error catalogue omits 409/413/415/405 and over-declares 404 and 429 on operations that cannot produce them",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java",
+  "line": 46,
+  "expected": "T-008: every operation lists its Problem Details error responses from the section 3.4 catalogue. Design 3.3 and api.md line 15 give POST /api/v1/links the errors 400, 401, 409, 413, 415, 429, 503; metadata/stats/delete 401, 404; the redirect 404, 503. 405 method-not-allowed is in the catalogue.",
+  "actual": "COMMON_ENTRIES contains only 400, 404, 429, 500, 503 (+401 under /api/). The export (docs/reference/openapi.yaml lines 25-83) therefore shows POST /api/v1/links without 409 alias-taken, 413 payload-too-large or 415 unsupported-media-type, even though LinkController declares consumes=application/json and the handler and RequestSizeFilter emit them; 405 appears on no operation. Conversely 404 is declared on POST /api/v1/links, and 429 with Retry-After is declared on GET/HEAD /{code}, GET/DELETE /api/v1/links/{code} and stats, although RateLimitFilter matches only POST /api/v1/links (RateLimitIT.get_afterTheCreateBucketIsEmpty_isNeverRateLimited proves it). The 201 and 302 responses also declare none of the Location, Cache-Control, X-Request-Id or X-RateLimit-* headers that api.md promises. OpenApiErrorCustomizerTest line 30 enshrines the incomplete set, and api.md and openapi.yaml now disagree on the same endpoints.",
+  "reproduction": "Compare docs/reference/openapi.yaml paths./api/v1/links.post.responses keys (201,400,401,404,429,500,503) with api.md line 15 and design 3.3. Then POST text/plain with a key -> 415 problem body, POST 17 KiB -> 413, duplicate alias -> 409: none are in the contract. GET /{code} 1000 times -> never 429 despite the declared response.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Filter-written Problem bodies lack `instance`, handler bodies include it; ProblemDetailIT skips the handler path that would expose the mismatch",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/api/ProblemWriter.java",
+  "line": 51,
+  "expected": "Design 3.4 and api.md line 39/61: every error body has one identical shape with members type, title, status, detail, instance, requestId, timestamp, and ProblemDetailIT exercises the three filter-produced paths and one handler path asserting that identical shape. The OpenAPI ProblemDetail schema documents `instance` as 'Request path, when known'.",
+  "actual": "ProblemDetails.of never sets instance and ProblemWriter has no access to the request, so 401 (entry point), 413 and 429 bodies have no `instance` member. Handler bodies are returned as ResponseEntity<ProblemDetail> and Spring MVC's HttpEntityMethodProcessor (verified in spring-webmvc-7.0.9.jar) fills instance with the request URI when null, so 400/404/405/409/415/500/503 bodies do carry `instance`. ProblemDetailIT.CANONICAL_MEMBERS (lines 37-38) is exactly the six-member filter shape and the class has no handler-path test, so the 'identical shape' claim in the design and api.md is untested and false.",
+  "reproduction": "GET /api/v1/links/abcdefg without a key -> body keys type,title,status,detail,requestId,timestamp. GET /api/v1/links/abcdefg with the key -> 404 body additionally has \"instance\":\"/api/v1/links/abcdefg\". Add a fourth ProblemDetailIT case for the 404 handler path using assertCanonicalShape and it fails on containsExactlyElementsOf.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Content-Security-Policy is applied to /v3/api-docs and /v3/api-docs.yaml, not only to Swagger UI paths",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/SecurityConfig.java",
+  "line": 38,
+  "expected": "Design 3.3, T-007 constraint and acceptance criterion, and api.md line 52: CSP 'only on Swagger UI paths'.",
+  "actual": "API_DOCS_PATHS bundles /v3/api-docs, /v3/api-docs/** and /v3/api-docs.yaml into the apiDocsChain that sets the CSP, so the JSON and YAML documents carry Content-Security-Policy. Harmless to a JSON consumer, but it contradicts the stated contract and SecurityHeadersIT.apiDocs_withoutKey_isPublicJson does not assert the header is absent, so the drift is unguarded.",
+  "reproduction": "curl -i http://localhost:8080/v3/api-docs | grep -i content-security-policy -> header present. Add .expectHeader().doesNotExist(\"Content-Security-Policy\") to SecurityHeadersIT.apiDocs_withoutKey_isPublicJson and it fails.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "ReservedWords adds `h2-console`, deviating from the 'exactly section 3.6' list",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/domain/ReservedWords.java",
+  "line": 33,
+  "expected": "T-003 constraint: 'ReservedWords holds exactly the section 3.6 list'. Design 3.6 lists 17 words ending at `login`; `h2-console` is not among them, so a client should be able to claim that alias.",
+  "actual": "The set contains an 18th entry, h2-console, so POST with customAlias h2-console is rejected 400 'Alias is reserved'. ReservedWordsTest line 31 and api.md line 30 were written to the code rather than the design, so the design (the declared source of truth per AGENTS.md) and the implementation disagree with no record of the decision in the sections reviewed.",
+  "reproduction": "POST /api/v1/links {\"url\":\"https://example.com\",\"customAlias\":\"h2-console\"} -> 400 validation-failed; compare with the reserved list in docs/design/2026-10-12-system-design.md section 3.6 (grep h2-console in the design returns nothing).",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "api.md promises X-RateLimit-Reset on create responses; it is sent only on 429",
+  "file": "docs/reference/api.md",
+  "line": 57,
+  "expected": "api.md Headers table: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset on 'create responses' (bucket capacity, remaining tokens, seconds to reset).",
+  "actual": "RateLimitFilter.doFilterInternal sets only X-RateLimit-Limit and X-RateLimit-Remaining on allowed requests (lines 88-89); X-RateLimit-Reset is written only inside reject() with the 429 (lines 125-126). A successful 201 never carries Reset, so a client following the reference to pace itself has no reset value until it is already throttled. RateLimitFilterTest lines 35-38 assert only Limit/Remaining on 200 and so document the gap.",
+  "reproduction": "POST /api/v1/links with a valid key and body -> 201 with X-RateLimit-Limit and X-RateLimit-Remaining, no X-RateLimit-Reset. Either emit Reset on every create response or correct the api.md row to '429 only'.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "api.md places the numeric-shorthand host rule under customAlias instead of url",
+  "file": "docs/reference/api.md",
+  "line": 30,
+  "expected": "The rejection of hosts like 2130706433 or 0x7f000001 is a URL rule implemented in UrlValidator.isAmbiguousNumericHost and reported on field `url` with MSG_HOST; it belongs in the `url` row of the create request rules.",
+  "actual": "The customAlias row ends with 'numeric shorthand hosts such as 2130706433 or 0x7f000001 are rejected because browsers resolve them...', which is meaningless for an alias (the alias regex has no hosts) and misleads a reader about which field fails and why. The `url` row omits the rule entirely, so a client gets a 400 on `url` for http://2130706433/ that the reference never predicts.",
+  "reproduction": "POST {\"url\":\"http://2130706433/\"} -> 400 with errors[0].field == \"url\" and message 'URL must have a valid host name or a canonical IP address' (UrlValidatorTest line 74); read api.md line 29-30 and note the rule is documented under customAlias.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Integration tests leak rows into the shared in-memory H2 while LinkFlowIT asserts an absolute row count",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/config/RateLimitIT.java",
+  "line": 44,
+  "expected": "Design 3.10 and AGENTS.md require every integration test to clean its tables in @AfterEach because all cached contexts share one database (jdbc:h2:mem:urlshortener;DB_CLOSE_DELAY=-1). No class may leave rows behind, and no test should assert an absolute table count against the shared database.",
+  "actual": "RateLimitIT's three allowed POSTs (lines 44-46) and ProblemDetailIT.rateLimited_body_hasTheCanonicalShape's first create() (line 81) each insert a real links row now that controllers exist, and neither class has an @AfterEach (also ApiKeyIT, SecurityHeadersIT, ActuatorIT have none, though they insert nothing). LinkFlowIT.create_withoutApiKey_returns401AndStoresNothing (line 138) asserts links.count() is zero. Surefire uses its default filesystem run order with nothing pinned, so whenever config/* classes run before api/* (ext4 directory hash order on ubuntu-latest, or -Dsurefire.runOrder=reversealphabetical/random) the four leaked rows reach LinkFlowIT and the assertion fails depending on which LinkFlowIT method happens to run first. Same family: RedirectIT.get_knownCode_returns302WithStoredLocationAndNoStore fires a redirect and tears down both tables without awaiting the asynchronous click insert, so the insert races the cleanup (FK violation counted as a spurious shortener.clicks.dropped{reason=error} and an ERROR log, or an H2 lock wait inside @AfterEach).",
+  "reproduction": "Add a throwaway class in the default context, e.g. ZzzLeakCheckIT with @SpringBootTest(RANDOM_PORT) @TestProfile and a single test asserting linkRepository.count() == 0, then run ./mvnw.cmd -pl url-shortener -Dtest='RateLimitIT,ZzzLeakCheckIT' -Dsurefire.runOrder=alphabetical test. The check fails with count 3. Repeat with ProblemDetailIT for count 1.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "SecurityHeadersIT never covers filter-produced 413/429 responses, which bypass Spring Security's header writers",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/config/SecurityHeadersIT.java",
+  "line": 43,
+  "expected": "T-007 acceptance criterion and design 3.3: WHEN any response is sent THE SYSTEM SHALL include nosniff, DENY and no-referrer headers. The header test should therefore include at least one 413 from RequestSizeFilter and one 429 from RateLimitFilter.",
+  "actual": "The parameterised test only requests two paths that resolve to 404 through the MVC stack. RequestSizeFilter and RateLimitFilter are registered at SecurityFilterProperties.DEFAULT_FILTER_ORDER-20 and -10, i.e. ahead of the Spring Security FilterChainProxy, and on rejection they write through ProblemWriter and return without calling chain.doFilter. HeaderWriterFilter and the Referrer-Policy writer configured in SecurityConfig therefore never run for those responses: they carry X-Request-Id (RequestIdFilter runs first) but not X-Content-Type-Options, X-Frame-Options, Referrer-Policy or Cache-Control. ProblemDetailIT checks only body shape, so the suite cannot detect the missing hardening headers on exactly the responses attackers trigger.",
+  "reproduction": "Start the service and run: curl -i -X POST http://localhost:8080/api/v1/links -H 'Content-Type: application/json' -H 'X-API-Key: dev-only-key-do-not-use' -H 'Content-Length: 20000' --data-binary @<a 20000-byte file>. Inspect the 413 headers for X-Content-Type-Options. Or add a SecurityHeadersIT case posting a 16385-byte body and expecting valueEquals(\"X-Content-Type-Options\", \"nosniff\").",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "ProblemDetailIT omits the handler-produced path that the design and api.md say it covers",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/config/ProblemDetailIT.java",
+  "line": 37,
+  "expected": "Design 3.4 and docs/reference/api.md: \"ProblemDetailIT exercises the three filter-produced paths and one handler path and asserts the identical shape.\"",
+  "actual": "The class contains exactly three tests (401, 413, 429), all written by ProblemWriter. No body produced by ApiExceptionHandler (404 link-not-found, 400 validation-failed, 409, 500) is passed through assertCanonicalShape, so the claim that filter bodies and handler bodies have an identical shape, and that requestId equals X-Request-Id on handler bodies, is never asserted. CANONICAL_MEMBERS has no provision for instance or errors, which is precisely the divergence between the two serialisation routes the test exists to catch.",
+  "reproduction": "Add linkNotFound_body_hasTheCanonicalShape: GET /api/v1/links/abcdefg with TestApiKey, expect 404, then assertCanonicalShape(result, HttpStatus.NOT_FOUND, \"/problems/link-not-found\"). Observe whether body.keySet() matches CANONICAL_MEMBERS exactly.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "No real-database collision/retry test; LinkService.isCodeCollision is only exercised with hand-written exception messages",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java",
+  "line": 40,
+  "expected": "Design 3.6: \"a real-database test pre-inserts a colliding code and stubs the generator to prove the retry\"; T-004 FR-03: a custom alias that loses the race on the unique constraint maps to 409.",
+  "actual": "LinkServiceTest mocks LinkAllocator and feeds synthetic DataIntegrityViolationException messages (an H2-style string at line 40 and a SQLException cause at line 166). LinkAllocatorTest separately proves the real H2 message names uk_links_code. Nothing composes the two: no @SpringBootTest or @DataJpaTest pre-inserts a code, stubs CodeGenerator with @MockitoBean to return it and then a fresh one, and asserts a 201 after one retry; no HTTP test reaches 409 via the constraint (LinkFlowIT.create_duplicateAlias_returns409AliasTaken only exercises the existsByCode fast path). A change in Spring's exception translation or H2's message text, or a regression in mentionsCodeConstraint, passes the suite while every random collision becomes a 500 in production.",
+  "reproduction": "In a @SpringBootTest(RANDOM_PORT) @TestProfile class declare @MockitoBean CodeGenerator generator; linkRepository.save(new Link(\"taken01\", \"https://example.com/t\", Instant.now())); when(generator.next()).thenReturn(\"taken01\", \"fresh02\"); POST /api/v1/links with a valid URL and key; expect 201 with $.code == fresh02 and verify(generator, times(2)).next().",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "ClickRecorded.requestId propagation is never asserted with a real correlation id",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java",
+  "line": 75,
+  "expected": "T-005 constraint: the request thread builds ClickRecorded(linkId, occurredAt, requestId); design 3.8: the click event carries requestId so the asynchronous log line correlates with the redirect.",
+  "actual": "The @WebMvcTest slice does not register RequestIdFilter (FilterRegistrations is not part of the slice), so the MDC is empty and the test hard-codes new ClickRecorded(42L, NOW, null) as the expected event. ClickRecordingIT asserts only linkId and occurredAt from the persisted row. A regression that always publishes null, or reads the MDC on the executor thread instead of the request thread, passes every test.",
+  "reproduction": "In a full-context test register a synchronous @EventListener sink for ClickRecorded, send GET /{code} with header X-Request-Id: trace-77, and assert the captured event's requestId() equals \"trace-77\".",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "OpenApiIT drift gate can silently skip and its outcome depends on build-info being present",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiIT.java",
+  "line": 71,
+  "expected": "T-008: \"docs/reference/openapi.yaml is exported from /v3/api-docs.yaml and OpenApiIT fails on any difference\"; api.md: compared byte for byte in the default build.",
+  "actual": "assumeTrue(Files.exists(COMMITTED_SPEC)) turns a deleted or renamed export into a skipped test, so a commit that removes docs/reference/openapi.yaml still passes mvnw verify. Separately, the committed file carries version: 0.1.0-SNAPSHOT (from the build-info goal) while OpenApiConfig falls back to 0.1.0 when BuildProperties is absent; the Javadoc's claim that the fallback keeps the document deterministic for the drift test is false, so the same test fails from an IDE and passes under Maven, and a version bump fails it for a reason unrelated to contract drift.",
+  "reproduction": "Move docs/reference/openapi.yaml aside and run ./mvnw.cmd -pl url-shortener -Dtest=OpenApiIT test: committedSpec_matchesRuntime is reported as skipped, not failed. Run OpenApiIT from an IDE without the build-info goal: it fails on the version line only.",
+  "confidence": "unsure",
+  "lens": "?"
+ },
+ {
+  "title": "Stale 'not 401 / not 429' assertions let 5xx regressions pass",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/config/ApiKeyIT.java",
+  "line": 69,
+  "expected": "With controllers present, a valid-key GET of an unknown code should assert 404 /problems/link-not-found, and allowed creates in RateLimitIT/ProblemDetailIT should assert 201.",
+  "actual": "ApiKeyIT.apiPath_withValidKey_passesAuthentication asserts status != 401; RateLimitIT.expectAllowed (lines 44-46, 126), get_afterTheCreateBucketIsEmpty (line 83), post_toAnotherApiPath (line 99) and ProblemDetailIT.rateLimited_body_hasTheCanonicalShape (line 83) assert status != 429. The justification in the class comments, \"controllers are not part of this slice of the work\", is no longer true (T-007 depends on T-004). A 500 from a broken controller, handler or security wiring satisfies all of these assertions.",
+  "reproduction": "Trace ApiKeyIT.apiPath_withValidKey_passesAuthentication: the request is GET /api/v1/links/abcdefg with a valid key, which today returns 404; the assertion would equally accept a 500 produced by LinkController throwing. Tighten to .isNotFound() and 201 respectively and confirm they pass.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "LinkControllerTest.delete_knownCode never verifies the service is invoked",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java",
+  "line": 237,
+  "expected": "The web slice should prove DELETE /api/v1/links/{code} delegates to LinkService.delete(code) (T-006 FR-09), as the sibling tests do with when(...)/verifyNoInteractions.",
+  "actual": "linkService is a @MockitoBean whose void delete does nothing by default; the test asserts only status 204 and an empty body. A LinkController.delete with an empty method body, or one that calls links.get(code) instead, passes this test. There is no verify(linkService).delete(\"abcdefg\").",
+  "reproduction": "Mentally remove links.delete(code) from LinkController.delete and re-read the test: every assertion still holds. Add verify(linkService).delete(\"abcdefg\") to make the test able to fail.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Statement-count acceptance criteria have no verifying test",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java",
+  "line": 41,
+  "expected": "T-002 AC: WHEN ClickEventRepository saves an event THE SYSTEM SHALL issue one INSERT with no preceding SELECT [FR-07]; T-006 AC: WHEN stats are computed THE SYSTEM SHALL issue one aggregate query over the (link_id, occurred_at) index [NFR-02].",
+  "actual": "ClickEventRepositoryTest, AnalyticsServiceTest and StatsIT assert results only; nothing captures SQL or statement counts (no Hibernate statistics, datasource proxy or H2 trace). Remapping ClickEvent.linkId to a @ManyToOne, switching to a non-IDENTITY id strategy, or adding a second query to summarize would pass the suite unnoticed.",
+  "reproduction": "In a @DataJpaTest set spring.jpa.properties.hibernate.generate_statistics=true, inject EntityManagerFactory, unwrap SessionFactory, and assert getStatistics().getPrepareStatementCount() rises by exactly 1 across clickEvents.save(...) plus flush, and by exactly 1 across clickEvents.summarize(...).",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Executor shutdown-drain settings mandated by T-005 are not asserted",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/config/ClickRecorderExecutorConfigTest.java",
+  "line": 36,
+  "expected": "T-005 constraint: the executor has waitForTasksToCompleteOnShutdown true and awaitTerminationSeconds 10 so in-flight clicks are kept during graceful shutdown (NFR-04 drain).",
+  "actual": "clickRecorderExecutor_hasTheDesignedBounds checks core, max, queue capacity and thread prefix only. Setting waitForTasksToCompleteOnShutdown to false or awaitTerminationSeconds to 0 in ClickRecorderExecutorConfig passes the whole suite; no test submits a slow task, calls shutdown() and proves the task still completes.",
+  "reproduction": "Submit a task that sleeps 300 ms and completes a CompletableFuture, call executor.shutdown(), then assert the future is done. With the current settings it passes; set waitForTasksToCompleteOnShutdown(false) and the task is interrupted, showing the test can fail.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "API key guessing is throttled only on POST /api/v1/links; every other key-checked path is an unthrottled key-validity oracle",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/RateLimitFilter.java",
+  "line": 49,
+  "expected": "Design 3.7 (\"Enumeration and key guessing: rate limiter before authentication\") and AGENTS.md (\"the rate limiter runs before authentication so key guessing is throttled\") promise that guessing the shared X-API-Key is rate limited. T-007 AC: \"rate limit before authentication so key guessing is throttled\".",
+  "actual": "CREATE_LINK matches only POST /api/v1/links. GET/DELETE /api/v1/links/{code}, GET .../stats, prod /actuator/info|metrics|prometheus, and /actuator/health in every profile all run ApiKeyFilter (ApiKeyFilter.java:39-42, 66-67) with no limiter in front, so an attacker gets unlimited 401-vs-404/200 answers per second against one static key. RateLimitIT.get_afterTheCreateBucketIsEmpty_isNeverRateLimited codifies this. Design 3.6 scopes the limiter to create, so 3.6 and 3.7 are inconsistent and the code implements the weaker one.",
+  "reproduction": "for i in $(seq 1 500); do curl -s -o /dev/null -w '%{http_code}\\n' -H \"X-API-Key: guess-$i\" http://localhost:8080/api/v1/links/abcdefg; done  -> 500 x 401, never a 429 or Retry-After. Repeat with the real key -> 404. Test to write: RateLimitIT case asserting that N+1 wrong-key GETs on /api/v1/links/{code} from one address yield 429.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "413 and 429 responses carry none of the mandated hardening headers because they are written before the Spring Security chain",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/FilterRegistrations.java",
+  "line": 86,
+  "expected": "Design 3.3: \"Headers on every response: X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, and Spring Security's default Cache-Control block\". T-007 AC: \"WHEN any response is sent THE SYSTEM SHALL include nosniff, DENY, and no-referrer headers\".",
+  "actual": "RequestSizeFilter (order DEFAULT_FILTER_ORDER-20) and RateLimitFilter (DEFAULT_FILTER_ORDER-10) write the Problem body via ProblemWriter and return without calling chain.doFilter (RequestSizeFilter.java:62,71; RateLimitFilter.java:94), so FilterChainProxy and its HeaderWriterFilter never run. The 413 and 429 responses have X-Request-Id and Content-Type only. SecurityHeadersIT only exercises 200/404 GETs and ProblemDetailIT only asserts body shape, so the gap is untested.",
+  "reproduction": "curl -si -X POST http://localhost:8080/api/v1/links -H 'Content-Type: application/json' -H 'Content-Length: 20000' -H 'X-API-Key: dev-only-key-do-not-use' --data-binary @<16k+ file>  -> 413 with no X-Content-Type-Options / X-Frame-Options / Referrer-Policy / Cache-Control. Same for the 429 after exhausting the bucket. Test to write: extend ProblemDetailIT.assertCanonicalShape (or SecurityHeadersIT) to assert the three headers on the 413 and 429 results.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Any sub-domain of .localhost bypasses the loopback block without DNS (RFC 6761)",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/service/UrlValidator.java",
+  "line": 52,
+  "expected": "Design 3.6/3.7 and T-003: reject loopback targets; the name list is `localhost` and `metadata.google.internal`. The stated threat is laundering an intranet link through the trusted short domain.",
+  "actual": "BLOCKED_HOST_NAMES is an exact-match Set, so `foo.localhost`, `admin.localhost:8080` etc. pass isBlockedHost (line 146) and are stored. Chrome, Firefox and systemd-resolved resolve *.localhost to 127.0.0.1 locally per RFC 6761, so the redirect lands on the victim's loopback exactly like `localhost` would, with no DNS involved. UrlValidatorTest has no *.localhost row.",
+  "reproduction": "curl -s -X POST http://localhost:8080/api/v1/links -H 'Content-Type: application/json' -H 'X-API-Key: dev-only-key-do-not-use' -d '{\"url\":\"http://admin.localhost:8080/\"}'  -> 201. Test to write: add Arguments.of(\"http://foo.localhost/\", UrlValidator.MSG_BLOCKED_HOST) and \"http://a.b.localhost./\" to UrlValidatorTest.rejectedUrls; fix by matching name.equals(\"localhost\") || name.endsWith(\".localhost\").",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "A wrong X-API-Key on the public /actuator/health returns 401 instead of serving the probe",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/ApiKeyFilter.java",
+  "line": 42,
+  "expected": "Design 3.3 lists /actuator/health and its liveness/readiness groups with Auth \"none\"; application.properties says \"health never does\" (need the key). A probe or monitor should get 200/503 regardless of what credential header it happens to carry.",
+  "actual": "PROTECTED_PATHS is /api/** OR /actuator/** with no health carve-out and no regard for app.security.actuator-requires-api-key, so any presented-but-wrong key on /actuator/health or /actuator/health/** is rejected with 401 (lines 66-68) in every profile, including dev where actuator is open. A monitor configured with a rotated/stale key sees the service as failing. It also makes health a key-validity oracle (see finding 1). ApiKeyIT.health_withoutKey_isPublic only tests the no-header case.",
+  "reproduction": "curl -si http://localhost:8080/actuator/health -H 'X-API-Key: stale'  -> 401 ApiKey realm=\"url-shortener\" (expect 200 {\"status\":\"UP\"}). Test to write: ApiKeyIT.health_withWrongKey_isStillPublic. Fix: exclude /actuator/health/** from PROTECTED_PATHS or drive the matcher from the same rules as SecurityConfig.authorize.",
+  "confidence": "unsure",
+  "lens": "?"
+ },
+ {
+  "title": "T-008's dated manual Swagger-under-CSP check is not recorded; docs/scenarios/greenfield.md does not exist",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/SecurityConfig.java",
+  "line": 41,
+  "expected": "T-008 constraint: \"The manual browser check is recorded with a date in docs/scenarios/greenfield.md\"; T-008 AC: the UI renders under the Swagger-only CSP with a working Authorize button. docs/testing.md and RK-16 both point at that record as the mitigation for a blank UI.",
+  "actual": "docs/scenarios contains only ambiguous.md and brownfield.md. The only automated check (SecurityHeadersIT.swaggerUi_carriesTheSwaggerOnlyContentSecurityPolicy) asserts the header string, not that springdoc's index.html, swagger-initializer.js and CSS actually load under `default-src 'self'` with no script-src (any inline script in the shipped UI would be blocked). The CSP's effectiveness and the UI's usability are therefore unverified in the repository.",
+  "reproduction": "ls docs/scenarios  -> no greenfield.md. Then open http://localhost:8080/swagger-ui.html in a browser with DevTools console open and look for 'Refused to execute inline script' / 'Refused to load' CSP violations; click Authorize, set the key, Try it out on GET /api/v1/links/{code}. Record the date and result in docs/scenarios/greenfield.md as T-008 requires.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Authorization is default-allow: anyRequest().permitAll() instead of the design's 'public only redirect, health, docs'",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/SecurityConfig.java",
+  "line": 111,
+  "expected": "Design 3.7 (\"Broken access control: API key on /api/v1/** and prod actuator; public only redirect, health, docs\") and AGENTS.md (\"public paths are redirect, health, and API docs only\") describe an allow-list of public paths.",
+  "actual": "authorize() permits health, conditionally /actuator/**, requires auth on /api/**, then `anyRequest().permitAll()`. Every path outside /api/** and /actuator/** is public by default: /error today, and any future controller, static resource or auto-configured endpoint tomorrow. The redirect should be the explicit exception (GET/HEAD on /{code:[A-Za-z0-9_-]{4,32}}) with anyRequest() denied or authenticated.",
+  "reproduction": "Code path: SecurityConfig.authorize lines 104-111. To demonstrate, drop a throwaway @RestController @GetMapping(\"/debug\") into the app and GET /debug without a key -> 200. Test to write: SecurityHeadersIT/ApiKeyIT case asserting GET /not-a-code-path returns 404 but POST /abcdefg (unmapped verb outside the allow-list) is 401 or 405 rather than silently permitted.",
+  "confidence": "unsure",
+  "lens": "?"
+ },
+ {
+  "title": "Firewall-rejected and pre-security-filter failures return Boot's default error JSON, not Problem Details",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/config/SecurityConfig.java",
+  "line": 79,
+  "expected": "Design 3.3: \"All error bodies are application/problem+json, whether produced by a controller, a filter, or the authentication entry point\"; 3.4: \"Every body carries requestId and timestamp\".",
+  "actual": "Spring Security's StrictHttpFirewall rejects `//`, `;`, `%2e` etc. via HttpStatusRequestRejectedHandler -> sendError(400) -> Boot's BasicErrorController, and any exception escaping RequestIdFilter/RequestSizeFilter/RateLimitFilter (e.g. BufferedBodyRequest's IllegalStateException) takes the same route. The body is {timestamp,status,error,path} with path echoing the raw request URI, no `type`, no `requestId`. No RequestRejectedHandler, ErrorController or server.error.* setting exists. No stack trace is exposed (Boot defaults), so this is a contract gap rather than a leak.",
+  "reproduction": "curl -si 'http://localhost:8080//abcdefg' and curl -si 'http://localhost:8080/abcdefg;x=1'  -> 400 with Content-Type application/json and Boot's {\"timestamp\",\"status\":400,\"error\":\"Bad Request\",\"path\":...} body instead of application/problem+json. Fix path: `http.requestRejectedHandler(...)` writing through ProblemWriter, or an ErrorController that renders ProblemDetails.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Database-unavailable maps to 500 about:blank, not 503 with Retry-After, because CannotCreateTransactionException is not handled",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java",
+  "line": 124,
+  "expected": "Design 3.4/3.6/3.13, R-01 and T-005 (\"DataAccessResourceFailureException and CannotGetJdbcConnectionException map to 503 with Retry-After 5\") intend every endpoint to answer 503 + Retry-After: 5 when Hikari cannot hand out a connection within 2 s.",
+  "actual": "Every database touch in this service goes through JpaTransactionManager (LinkAllocator.insert, LinkService.delete, AnalyticsService.stats, and the Spring Data finders used by resolve/get/existsByCode, which are @Transactional(readOnly=true) on SimpleJpaRepository). When the pool times out, the connection is acquired in JpaTransactionManager.doBegin -> HibernateJpaDialect.beginTransaction, Hibernate throws JDBCConnectionException, and doBegin wraps it in org.springframework.transaction.CannotCreateTransactionException (\"Could not open JPA EntityManager for transaction\"). That is a TransactionException, not a DataAccessException, so neither @ExceptionHandler on lines 124-128 matches and it falls to handleUnexpected -> 500 about:blank with no Retry-After. The same holds for TransactionSystemException on a commit-time failure. DataAccessResourceFailureException is only produced when a connection is lost mid-statement after the transaction began, and CannotGetJdbcConnectionException is only thrown by DataSourceUtils (JdbcTemplate / DataSourceTransactionManager), which this code base never uses, so that mapping is dead. ApiExceptionHandlerTest.handleDatabaseUnavailable_* only feeds the two listed types, so the gap is invisible to the gate.",
+  "reproduction": "Deterministic: in LinkControllerTest add a test stubbing linkService.create(any()) to throw new CannotCreateTransactionException(\"Could not open JPA EntityManager for transaction\", new org.hibernate.exception.JDBCConnectionException(\"Unable to acquire JDBC Connection\", new java.sql.SQLTransientConnectionException(\"HikariPool-1 - Connection is not available, request timed out after 2000ms.\"))) and assert 503 + Retry-After 5; it returns 500 about:blank. Full stack: @SpringBootTest with a @TestConfiguration that wraps the real DataSource in a DelegatingDataSource whose getConnection() throws SQLTransientConnectionException once a flag is set; flip the flag, GET /{code} or POST /api/v1/links -> 500 about:blank instead of 503. Fix: add CannotCreateTransactionException (and TransactionSystemException whose root cause is an SQLException/JDBCConnectionException) to handleDatabaseUnavailable.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Concurrent DELETEs of the same code: the loser gets 500 instead of 404 because the derived deleteByCode loads-then-removes",
+  "file": "url-shortener/src/main/java/dev/harshil/shortener/repository/LinkRepository.java",
+  "line": 25,
+  "expected": "T-006 / design 3.4: unknown code on delete is 404 link-not-found; DELETE should be safe to retry. The Javadoc on deleteByCode promises \"the number of links removed, 0 or 1\" and LinkService.delete (line 137) treats 0 as not-found.",
+  "actual": "Spring Data's derived delete (JpaQueryExecution.DeleteExecution) runs SELECT ... WHERE code=?, calls em.remove for each row, and returns resultList.size(), i.e. the number of rows FOUND, not removed. The DELETE itself happens at flush/commit. Two concurrent DELETE /api/v1/links/{code} both SELECT the row, both get 1 back, both pass the `== 0` check; at commit the second DELETE affects 0 rows and Hibernate's default row-count Expectation throws StaleStateException -> OptimisticLockException -> ObjectOptimisticLockingFailureException / TransactionSystemException out of the LinkService.delete proxy -> handleUnexpected -> 500 about:blank. Only the sequential double-delete is tested (LinkManagementIT.delete_twice_secondCallReturns404LinkNotFound). A redirect-vs-delete race is benign (the click insert fails on the FK and is counted as dropped), but the delete-vs-delete race leaks a 500 for an expected 404.",
+  "reproduction": "Test: @SpringBootTest, create a link, then from two threads (CountDownLatch to align) issue DELETE /api/v1/links/{code} with the API key; expect exactly one 204 and one 404, observe one 204 and one 500 (also visible as an ERROR 'Unhandled exception' log line with a StaleStateException / 'Batch update returned unexpected row count' cause). Fix: replace the derived method with @Modifying @Query(\"delete from Link l where l.code = :code\") int deleteByCode(@Param(\"code\") String code) so the returned count is the real affected-row count (0 -> 404) and only one statement is issued.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Async isolation of click recording is never proven end-to-end: no test shows the recorder runs on clickRecorderExecutor or that a saturated queue still yields 302; the named T-005 test does not exist",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java",
+  "line": 34,
+  "expected": "T-005 AC: \"IF event persistence throws or the queue is full THEN THE SYSTEM SHALL still return 302 and increment shortener.clicks.dropped\" and \"record a click event off the request thread\". T-005 verification (harness/tasks/T-005.yaml:57) and design FR-07/NFR-03 cite ClickRecorderExecutorTest.rejectionIsCountedNotBlocking.",
+  "actual": "No class ClickRecorderExecutorTest or method rejectionIsCountedNotBlocking exists; the closest is ClickRecorderExecutorConfigTest.clickRecorderExecutor_whenQueueAndThreadsAreFull_dropsCountsAndDoesNotBlock, which exercises a hand-built executor in isolation, never the @Async(\"clickRecorderExecutor\") @EventListener wiring. ClickRecordingIT only awaits the row (or the reason=error counter); every assertion would still pass if @EnableAsync were removed, if the @Async qualifier pointed at Boot's applicationTaskExecutor, or if the listener ran synchronously on the request thread, because ClickRecorder.on catches its own exceptions. Nothing checks the thread name on the executor path, and the 'queue full -> still 302 -> reason=saturated increments' branch is never driven through a redirect. The asynchrony that NFR-03 rests on is therefore unverified in the gate.",
+  "reproduction": "Add to ClickRecordingIT: (a) doAnswer on the spied ClickEventRepository.save that records Thread.currentThread().getName() and assert it startsWith(\"click-recorder-\") after a GET /{code}; (b) inject the clickRecorderExecutor bean, block its 4 threads with latched tasks and fill the 1000-slot queue (as ClickRecorderExecutorConfigTest does), then GET /{code} and assert 302 within a timeout and shortener.clicks.dropped{reason=saturated} == before + 1. Also fix the dangling verification name in harness/tasks/T-005.yaml:57 (and design rows FR-07/NFR-03) so harness-check traceability points at a real test.",
+  "confidence": "likely",
+  "lens": "?"
+ },
+ {
+  "title": "Alias race -> 409 and random-collision retry are only proven with fabricated exception messages; the real-database test the design and T-004 require does not exist",
+  "file": "url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java",
+  "line": 30,
+  "expected": "Design FR-03 names \"LinkAllocatorTest.aliasRaceMapsTo409 on a real database\"; design 3.6 says \"a real-database test pre-inserts a colliding code and stubs the generator to prove the retry\"; harness/tasks/T-004.yaml:57 lists LinkAllocatorTest.aliasRaceMapsTo409 as verification.",
+  "actual": "LinkAllocatorTest has no aliasRaceMapsTo409 method and never goes through LinkService. The collision classification (LinkService.isCodeCollision, lines 181-188) sniffs the exception message for 'uk_links_code'; the only tests of the alias-race-to-409 and collide-then-retry branches are LinkServiceTest cases that construct DataIntegrityViolationException with hand-written H2/PostgreSQL-looking messages (lines 40-43, 163-166). LinkFlowIT.create_duplicateAlias_returns409AliasTaken only hits the existsByCode fast path, never the constraint. The message-based contract between the real driver/Hibernate/Spring translation and isCodeCollision is therefore exercised only indirectly (LinkAllocatorTest.insert_duplicateCode_... checks the top-level message on H2), and never for the alias path, and not at all for the retry with a stubbed generator the design calls for.",
+  "reproduction": "Add to LinkAllocatorTest (or a new @DataJpaTest with @Import({LinkService.class, LinkAllocator.class, UrlValidator.class}) and @MockitoBean CodeGenerator, NOT_SUPPORTED propagation): pre-insert a row with code 'taken01'; (a) stub generator.next() to return 'taken01' then 'fresh02' and assert service.create(...) returns 'fresh02' with links.count()==2; (b) call service.create(new CreateLinkRequest(url, 'taken01')) after a second thread/row made existsByCode false-then-true (or simply bypass the fast path by inserting between the check and the insert via a spy on LinkRepository.existsByCode returning false) and assert AliasTakenException. Rename to aliasRaceMapsTo409 or correct T-004.yaml:57 and the design FR-03 row so traceability resolves.",
+  "confidence": "likely",
+  "lens": "?"
+ }
+]

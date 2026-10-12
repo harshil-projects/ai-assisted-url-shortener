@@ -639,6 +639,51 @@ entries:
     reviewer: Harshil
     started_at: 2026-10-12T03:45:00Z
     finished_at: 2026-10-12T04:40:00Z
+  - task: T-010
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-010/v1.md
+    raw_output: harness/evidence/T-010/ai-raw.patch
+    files:
+      - { path: harness/reviews/greenfield-review.md, status: edited }
+      - { path: harness/evidence/T-010/review-candidates.json, status: generated }
+    rationale: >
+      Engineer-asserted. Four single-lens reviewers were planned; the contract and test-quality
+      reviewers completed before an account rate limit stopped the run, producing 30 candidates. A
+      second session judged every candidate against the code, the task specs and the design, merging
+      duplicates and defaulting to "not real" when a test or a line refutes the claim; the engineer
+      confirmed the verdicts. One candidate became T-105; the other real ones are listed as follow-ups
+      in docs/risks-and-limitations.md with the reproduction notes in the review.
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T04:00:00Z
+    finished_at: 2026-10-12T05:05:00Z
+  - task: T-105
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-105/v1.md
+    raw_output: harness/evidence/T-105/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ProblemWriter.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/FilterResponseHeadersRegressionTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/AttributionIT.java, status: edited }
+    rationale: >
+      Engineer-asserted. Debug playbook followed: hypothesis stated, regression test written first and
+      shown red (harness/evidence/T-105/red.log), five-line fix in ProblemWriter, test green
+      (green.log), full module verify 419 tests with zero findings. The engineer additionally awaited the
+      asynchronous click in AttributionIT after the session reported a one-off leak into the next test.
+      Review artifact harness/reviews/T-105.md; impact raised to high (security) as the T-010 review
+      required.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "RequestSizeFilter and RateLimitFilter write 413 and 429 through ProblemWriter before the Spring Security chain, so HeaderWriterFilter never adds the hardening headers", finding: "confirmed. FilterResponseHeadersRegressionTest red on the parent code: X-Content-Type-Options expected nosniff but was empty on both responses", fix: "ProblemWriter.write sets X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Cache-Control no-store when absent" }
+      - { hypothesis: "a new test with only app.ratelimit.create.capacity=1 gets its own context", finding: "refuted. Identical properties made Spring reuse ProblemDetailIT's context and the two classes shared one bucket", fix: "a second pinned property gives the test its own context" }
+    reviewer: Harshil
+    started_at: 2026-10-12T04:48:00Z
+    finished_at: 2026-10-12T05:15:00Z
 gates:
   - task: T-000
     commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
@@ -1073,3 +1118,11 @@ signoffs:
     statement: >
       Migration V3 and the attribution slice reviewed against the R-03 decision and ADR 0006; the
       seven-column shape of click_events asserted by a test.
+  - task: T-105
+    reasons: [security]
+    review: harness/reviews/T-105.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T05:17:00Z
+    statement: >
+      Hardening headers on filter-written responses reviewed against design section 3.3; red and
+      green logs confirm the failing-first order; no filter or security chain change.

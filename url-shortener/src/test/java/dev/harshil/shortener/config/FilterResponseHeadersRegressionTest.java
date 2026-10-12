@@ -1,0 +1,82 @@
+package dev.harshil.shortener.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import dev.harshil.shortener.support.TestApiKey;
+import dev.harshil.shortener.support.TestProfile;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.client.RestTestClient;
+import org.springframework.test.web.servlet.client.RestTestClient.ResponseSpec;
+
+/**
+ * Regression test for T-105: the 413 from {@link RequestSizeFilter} and the 429 from {@link
+ * RateLimitFilter} are written before the Spring Security chain runs, so they lacked the hardening
+ * headers every other response carries (design 3.3, NFR-05).
+ *
+ * <p>Runs in a dedicated context with a create capacity of one so the 429 is reached with a single
+ * extra request. The 413 request is refused before the limiter runs, so it never consumes the only
+ * token and the two tests are independent of each other's order. The body limit is pinned
+ * explicitly: it is the value the 413 test relies on, and it keeps this context's cache key apart
+ * from {@link ProblemDetailIT}'s, which would otherwise share (and drain) the same token bucket.
+ */
+@SpringBootTest(
+    webEnvironment = WebEnvironment.RANDOM_PORT,
+    properties = {"app.ratelimit.create.capacity=1", "app.request.max-bytes=16384"})
+@AutoConfigureRestTestClient
+@TestProfile
+class FilterResponseHeadersRegressionTest {
+
+  private static final int MAX_BODY_BYTES = 16_384;
+  private static final String CREATE_BODY = "{\"url\":\"https://example.com/docs\"}";
+
+  @Autowired private RestTestClient client;
+
+  @Test
+  void rateLimited429_carriesTheSecurityHeaders() {
+    create(CREATE_BODY)
+        .expectStatus()
+        .value(status -> assertThat(status).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS.value()));
+
+    ResponseSpec rejected = create(CREATE_BODY);
+
+    rejected.expectStatus().isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+    expectSecurityHeaders(rejected);
+  }
+
+  @Test
+  void payloadTooLarge413_carriesTheSecurityHeaders() {
+    ResponseSpec rejected = create("x".repeat(MAX_BODY_BYTES + 1));
+
+    rejected.expectStatus().isEqualTo(HttpStatus.CONTENT_TOO_LARGE);
+    expectSecurityHeaders(rejected);
+  }
+
+  private ResponseSpec create(String body) {
+    return client
+        .post()
+        .uri("/api/v1/links")
+        .header(TestApiKey.HEADER, TestApiKey.VALUE)
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(body)
+        .exchange();
+  }
+
+  private static void expectSecurityHeaders(ResponseSpec response) {
+    response
+        .expectHeader()
+        .valueEquals("X-Content-Type-Options", "nosniff")
+        .expectHeader()
+        .valueEquals("X-Frame-Options", "DENY")
+        .expectHeader()
+        .valueEquals("Referrer-Policy", "no-referrer")
+        .expectHeader()
+        .value(HttpHeaders.CACHE_CONTROL, value -> assertThat(value).contains("no-store"));
+  }
+}
