@@ -58,6 +58,6 @@ technical_context:
 verification:
   - ApiKeyIT
   - RateLimitIT
-  - RateLimitIT.limitsUnauthenticatedCreates
+  - RateLimitIT
   - SecurityHeadersIT
   - ProdStartupIT

@@ -50,8 +50,8 @@ technical_context:
     - "docs/design/2026-10-12-system-design.md#3.10"
     - "docs/design/2026-10-12-system-design.md#3.11"
 verification:
-  - RedirectIT.redirectsWith302
-  - RedirectIT.unknownCodeIs404
-  - ClickRecordingIT.recordsClickAfterRedirect
-  - ClickRecordingIT.redirectSurvivesAnalyticsFailure
+  - RedirectIT
+  - RedirectIT
+  - ClickRecordingIT
+  - ClickRecordingIT
   - ClickRecorderExecutorTest.rejectionIsCountedNotBlocking

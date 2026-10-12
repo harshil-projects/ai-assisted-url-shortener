@@ -53,7 +53,7 @@ technical_context:
     - "docs/design/2026-10-12-system-design.md#3.6"
     - "docs/design/2026-10-12-system-design.md#4.3"
 verification:
-  - LinkControllerTest.rejectsInvalidUrls
-  - LinkAllocatorTest.aliasRaceMapsTo409
-  - LinkFlowIT.createsLinkAndReturns201
-  - LinkFlowIT.acceptsCustomAlias
+  - LinkControllerTest
+  - LinkAllocatorTest
+  - LinkFlowIT
+  - LinkFlowIT

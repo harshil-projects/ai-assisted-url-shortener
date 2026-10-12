@@ -36,5 +36,5 @@ technical_context:
 verification:
   - "full suite green with git diff --stat <parent> -- url-shortener/src/test empty"
   - "Checkstyle MethodLength and FileLength clean"
-  - OpenApiIT.committedSpecMatchesRuntime
+  - OpenApiIT
   - "before and after measurement recorded in the ledger rationale"

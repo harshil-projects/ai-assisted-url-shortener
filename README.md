@@ -45,7 +45,7 @@ Run these in a second PowerShell window while the service is up. `curl.exe --%` 
    ```powershell
    curl.exe -s http://localhost:8080/actuator/health
    ```
-   Expect a body that starts with `{"status":"UP"`.
+   Expect `HTTP 200` and a JSON body whose top-level `"status"` is `"UP"`; the dev profile shows the component details first (database, disk space, liveness, readiness) and the overall status last.
 2. Create a link. One endpoint serves both ways of getting a code: leave `customAlias` out and the service generates a random 7-character Base62 code; include it and that alias (4 to 32 characters of `[A-Za-z0-9_-]`, not a reserved word) becomes the code.
 
    Random code:
@@ -85,7 +85,7 @@ Run these in a second PowerShell window while the service is up. `curl.exe --%` 
    ```
    Expect `HTTP/1.1 204`.
 
-`.\scripts\demo.ps1` runs the same sequence through PowerShell's own HTTP client, printing status codes and headers, with no quoting tricks. To see the 429, send the create request more times than `app.ratelimit.create.capacity` allows within a minute (100 in the dev profile).
+`.\scripts\demo.ps1` runs a six-step version of this walkthrough through PowerShell's own HTTP client (health, random-code create, redirect, stats, a create without a key, an unknown code) and prints each status code against the expected one, with no quoting tricks; it does not create the alias or delete. To see the 429, send the create request more times than `app.ratelimit.create.capacity` allows within a minute (100 in the dev profile).
 
 ## Where the evidence is
 

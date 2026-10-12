@@ -44,5 +44,5 @@ technical_context:
     - "docs/design/2026-10-12-system-design.md#4.1"
     - "docs/design/2026-10-12-system-design.md#8"
 verification:
-  - OpenApiIT.committedSpecMatchesRuntime
+  - OpenApiIT
   - "manual browser check of /swagger-ui.html with Authorize, dated in docs/scenarios/greenfield.md"

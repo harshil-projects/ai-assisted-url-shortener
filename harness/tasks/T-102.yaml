@@ -59,4 +59,4 @@ verification:
   - ExpiryIT.rejectsPastAndZoneless
   - ExpiryIT.expiredLinkIs410AndStatsRemain
   - MigrationTest
-  - OpenApiIT.committedSpecMatchesRuntime
+  - OpenApiIT

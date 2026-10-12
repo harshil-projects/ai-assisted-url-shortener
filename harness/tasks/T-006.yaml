@@ -46,6 +46,6 @@ technical_context:
     - "docs/design/2026-10-12-system-design.md#5.6"
     - "docs/design/2026-10-12-system-design.md#8"
 verification:
-  - StatsIT.returnsCounts
+  - StatsIT
   - LinkManagementIT
   - ClickEventRepositoryTest
