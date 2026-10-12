@@ -4,7 +4,7 @@ requirement: R-03
 activities: [test-gen, document]
 impact: normal
 impact_reasons: []
-status: todo
+status: in-progress
 depends_on: [T-202]
 intent: >
   Prove and document what T-202 built: tests for every criterion in the R-03 decision with an
