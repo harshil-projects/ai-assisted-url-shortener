@@ -89,6 +89,19 @@ flowchart TB
 | `harness-check` | JUnit tests that read `harness/`, the source tree, and git history when available; failures are violations; writes the traceability report to `target/` | SnakeYAML, Boot-managed |
 | `docs/` | Deliverable documents and the committed report snapshot | generated report |
 
+## Logical services and their APIs
+
+The service is one deployable, but its endpoints form four logical services with different traffic
+shapes and protection. The code is organised along the same lines, and the design document (section
+2.1) and the README carry the same table.
+
+| Logical service | Endpoints | Main classes | Protection | Notes |
+|---|---|---|---|---|
+| Write path | `POST /api/v1/links` | `LinkController`, `LinkService`, `LinkAllocator`, `CodeGenerator`, `UrlValidator` | API key; rate limit before authentication; 16 KiB body cap | Random 7-character Base62 code or a client-supplied `customAlias`; one transaction per allocation attempt; 409 on a taken alias; optional `expiresAt` |
+| Read path (hot) | `GET /{code}`, `HEAD /{code}` | `RedirectController`, `LinkService.resolve`, `ClickRecorder` on `clickRecorderExecutor` | Public; the path regex keeps noise such as `/favicon.ico` away from the database | One indexed lookup; 302 with `no-store`, 410 once expired; the click with its attribution is published as an immutable event and persisted asynchronously; `HEAD` resolves without counting |
+| Management and analytics | `GET /api/v1/links/{code}`, `DELETE /api/v1/links/{code}`, `GET /api/v1/links/{code}/stats` | `LinkController`, `StatsController`, `AnalyticsService`, `ClickEventRepository` | API key | Metadata with the expiry state; hard delete with cascading click removal; one aggregate query for the totals plus the two top-ten attribution breakdowns |
+| Platform | `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`, `/v3/api-docs`, `/v3/api-docs.yaml`, `/swagger-ui.html` | Spring Boot Actuator, springdoc, `OpenApiConfig`, `OpenApiErrorCustomizer` | Health public; the other actuator endpoints behind the key in prod and open in dev; API docs public under their own Content-Security-Policy | Build info, custom counters, committed OpenAPI export drift-tested on every build |
+
 ## Tools
 
 | Purpose | Tool | Version | Why this one |
