@@ -55,7 +55,8 @@
 <main>
 <header>
   <h1><small>Design overview, companion to 2026-10-12-system-design.md v2</small>URL Shortener: requirements, architecture, algorithm, data</h1>
-  <div class="meta">Java 21 · Spring Boot 4.1.1 · H2 file mode · single node<br>status: awaiting engineer approval · 2026-10-12</div>
+  <div class="meta">Java 21 · Spring Boot 4.1.1 · H2 file mode · single node<br>status: delivered · v0.1.0 · 2026-10-12 · all three scenarios complete</div>
+  <p class="legend" style="grid-column:1/-1;margin:0;max-width:none">numbers at delivery: 419 service tests · 97.9 percent line and 94.0 percent branch coverage · zero SpotBugs and Checkstyle findings · CI green on Windows and Ubuntu · perf smoke on a loaded laptop: p50 8 ms, p99 119 ms against a 200 ms smoke threshold, not a capacity claim</p>
 </header>
 
 <h2><span class="n">01</span> Requirements</h2>
@@ -78,7 +79,7 @@
 <tr><td>FR-12</td><td>Health, info, metrics, Prometheus; OpenAPI matching the committed copy; working Swagger UI</td><td>Greenfield</td></tr>
 <tr><td>FR-13</td><td>expiresAt: RFC 3339 with offset, future only</td><td>Brownfield</td></tr>
 <tr><td>FR-14</td><td>Expired: 410 no-store, row and history kept, expired:true in metadata and stats</td><td>Brownfield</td></tr>
-<tr><td>FR-15</td><td>"Where do clicks come from" is decided in the clarification task, not pre-decided</td><td>Ambiguous</td></tr>
+<tr><td>FR-15</td><td>"Where do clicks come from" was clarified with dated stakeholder questions, then built: each click records the referring host and utm_source, utm_medium, utm_campaign; stats return the top-ten referrers and campaigns; no IP, user agent or full referrer URL is stored</td><td>Ambiguous</td></tr>
 </table>
 </div>
 <div>
@@ -115,41 +116,42 @@
 <rect x="380" y="60" width="330" height="170" class="box"/><text x="545" y="88" text-anchor="middle" font-weight="600">url-shortener service</text><text x="545" y="108" text-anchor="middle" class="m">Spring Boot 4.1.1 · Java 21 · one JVM · port 8080</text>
 <text x="545" y="134" text-anchor="middle" class="m">POST /api/v1/links → 201   ·   GET /{code} → 302</text><text x="545" y="152" text-anchor="middle" class="m">GET /api/v1/links/{code} · GET …/{code}/stats · DELETE …/{code}</text><text x="545" y="170" text-anchor="middle" class="m">/actuator/health · /actuator/metrics · /v3/api-docs · /swagger-ui.html</text><text x="545" y="196" text-anchor="middle" class="m">filters → controllers → services → repositories</text>
 <rect x="860" y="100" width="220" height="90" rx="6" class="db"/><text x="970" y="132" text-anchor="middle" font-weight="600">H2 file database</text><text x="970" y="152" text-anchor="middle" class="m">./data/urlshortener.mv.db</text><text x="970" y="170" text-anchor="middle" class="m">schema owned by Flyway</text>
-<rect x="380" y="250" width="330" height="40" class="ext"/><text x="545" y="275" text-anchor="middle" class="m">Build-time only: engineer + Claude Code (specs, review, ledger, gates)</text>
+<rect x="380" y="250" width="330" height="40" class="ext"/><text x="545" y="275" text-anchor="middle" class="m">Build-time only: engineer + AI assistant (specs, review, ledger, gates)</text>
 <path d="M200,72 L380,100" class="ar c"/><path d="M200,172 L380,150" class="ar c"/><path d="M200,255 L380,230" class="ar"/>
 <path d="M710,145 L860,145" class="ar d"/><text x="785" y="138" text-anchor="middle" class="m">JDBC</text>
 </svg>
 <p class="legend">dashed = outside the system boundary · rust arrows = control requests · green = data access · purple dashed = asynchronous</p>
 
 <h3>Logical services: write path, read path, management</h3>
-<svg viewBox="0 0 1120 340" role="img" aria-label="Logical services with their APIs">
-<rect x="250" y="20" width="600" height="300" fill="none" stroke="#1b1f24" stroke-width="1.5" stroke-dasharray="6 4"/><text x="266" y="40" class="m">one JVM today · three services that separate cleanly tomorrow</text>
-<rect x="30" y="60" width="170" height="54" class="ext"/><text x="115" y="83" text-anchor="middle">API client</text><text x="115" y="100" text-anchor="middle" class="m">marketing tool, script</text>
-<rect x="30" y="210" width="170" height="54" class="ext"/><text x="115" y="233" text-anchor="middle">Browser</text><text x="115" y="250" text-anchor="middle" class="m">anyone clicking a short link</text>
-<rect x="280" y="60" width="250" height="70" class="box"/><text x="405" y="84" text-anchor="middle" font-weight="600">URL Shortening Service</text><text x="405" y="102" text-anchor="middle" class="m">write path · POST /api/v1/links</text><text x="405" y="118" text-anchor="middle" class="m">validate → code → insert → 201</text>
-<rect x="280" y="145" width="250" height="70" class="box"/><text x="405" y="169" text-anchor="middle" font-weight="600">Link Management &amp; Analytics</text><text x="405" y="187" text-anchor="middle" class="m">GET /api/v1/links/{code} · GET …/stats</text><text x="405" y="203" text-anchor="middle" class="m">DELETE /api/v1/links/{code}</text>
-<rect x="280" y="230" width="250" height="70" class="soft"/><text x="405" y="254" text-anchor="middle" font-weight="600">URL Redirection Service</text><text x="405" y="272" text-anchor="middle" class="m">read path, hot · GET /{code}</text><text x="405" y="288" text-anchor="middle" class="m">lookup → 302 / 404 / 410 → emit click</text>
-<rect x="590" y="230" width="230" height="70" class="soft"/><text x="705" y="254" text-anchor="middle" font-weight="600">Click Recorder</text><text x="705" y="272" text-anchor="middle" class="m">async, bounded queue</text><text x="705" y="288" text-anchor="middle" class="m">one INSERT per click</text>
-<rect x="880" y="120" width="210" height="100" rx="6" class="db"/><text x="985" y="150" text-anchor="middle" font-weight="600">Store</text><text x="985" y="170" text-anchor="middle" class="m">links (code UNIQUE)</text><text x="985" y="188" text-anchor="middle" class="m">click_events (link_id, time)</text><text x="985" y="206" text-anchor="middle" class="m">H2 now · PostgreSQL later</text>
-<path d="M200,80 L280,90" class="ar c"/><text x="232" y="72" class="m">X-API-Key</text>
-<path d="M200,95 L280,170" class="ar c"/>
-<path d="M200,237 L280,265" class="ar c"/><text x="215" y="285" class="m">no auth, public</text>
-<path d="M530,95 C700,95 760,140 880,150" class="ar d"/><text x="690" y="100" class="m">INSERT link, own tx</text>
-<path d="M530,180 L880,180" class="ar d"/><text x="690" y="173" class="m">SELECT · aggregate · DELETE</text>
-<path d="M530,255 C640,230 760,215 880,205" class="ar d"/><text x="640" y="228" class="m">SELECT by code</text>
-<path d="M530,280 L590,280" class="ar s"/>
-<path d="M820,265 C860,260 880,240 900,220" class="ar s"/><text x="840" y="300" class="m">INSERT click_event</text>
+<svg viewBox="0 0 1120 510" role="img" aria-label="Logical services with their APIs">
+<rect x="250" y="20" width="600" height="470" fill="none" stroke="#1b1f24" stroke-width="1.5" stroke-dasharray="6 4"/><text x="266" y="40" class="m">one JVM today · three services that separate cleanly tomorrow</text>
+<rect x="30" y="80" width="170" height="54" class="ext"/><text x="115" y="103" text-anchor="middle">API client</text><text x="115" y="120" text-anchor="middle" class="m">marketing tool, script</text>
+<rect x="30" y="311" width="170" height="54" class="ext"/><text x="115" y="334" text-anchor="middle">Browser</text><text x="115" y="351" text-anchor="middle" class="m">anyone clicking a short link</text>
+<rect x="280" y="55" width="260" height="86" class="box"/><text x="410" y="79" text-anchor="middle" font-weight="600">URL Shortening Service</text><text x="410" y="97" text-anchor="middle" class="m">write path · POST /api/v1/links</text><text x="410" y="113" text-anchor="middle" class="m">url, customAlias?, expiresAt?</text><text x="410" y="129" text-anchor="middle" class="m">validate → code → insert → 201</text>
+<rect x="280" y="155" width="260" height="118" class="box"/><text x="410" y="179" text-anchor="middle" font-weight="600">Link Management &amp; Analytics</text><text x="410" y="197" text-anchor="middle" class="m">GET /api/v1/links/{code} · GET …/stats</text><text x="410" y="213" text-anchor="middle" class="m">DELETE /api/v1/links/{code}</text><text x="410" y="229" text-anchor="middle" class="m">stats: totals, 24h, 7d, last click,</text><text x="410" y="245" text-anchor="middle" class="m">top-10 referrers and campaigns,</text><text x="410" y="261" text-anchor="middle" class="m">expiry state (expiresAt, expired)</text>
+<rect x="280" y="287" width="260" height="102" class="soft"/><text x="410" y="311" text-anchor="middle" font-weight="600">URL Redirection Service</text><text x="410" y="329" text-anchor="middle" class="m">read path, hot · GET, HEAD /{code}</text><text x="410" y="345" text-anchor="middle" class="m">lookup → 302 / 404 / 410 (expired)</text><text x="410" y="361" text-anchor="middle" class="m">emit click with referrer host</text><text x="410" y="377" text-anchor="middle" class="m">and utm_* attribution</text>
+<rect x="590" y="305" width="230" height="86" class="soft"/><text x="705" y="329" text-anchor="middle" font-weight="600">Click Recorder</text><text x="705" y="347" text-anchor="middle" class="m">async, bounded queue</text><text x="705" y="363" text-anchor="middle" class="m">one INSERT per click</text><text x="705" y="379" text-anchor="middle" class="m">with referrer host and utm_*</text>
+<rect x="280" y="405" width="550" height="70" class="box"/><text x="555" y="429" text-anchor="middle" font-weight="600">Platform</text><text x="555" y="447" text-anchor="middle" class="m">/actuator/health · info · metrics · prometheus · /v3/api-docs · /swagger-ui.html</text><text x="555" y="463" text-anchor="middle" class="m">health and docs public · info, metrics, prometheus behind the key in prod</text>
+<rect x="870" y="150" width="230" height="102" rx="6" class="db"/><text x="985" y="174" text-anchor="middle" font-weight="600">Store</text><text x="985" y="192" text-anchor="middle" class="m">links: code UNIQUE, expires_at</text><text x="985" y="208" text-anchor="middle" class="m">click_events: link_id, time,</text><text x="985" y="224" text-anchor="middle" class="m">referrer_host, utm_* (V3)</text><text x="985" y="240" text-anchor="middle" class="m">H2 now · PostgreSQL later</text>
+<path d="M200,100 L280,98" class="ar c"/><text x="208" y="90" class="m">X-API-Key</text>
+<path d="M200,120 L280,205" class="ar c"/>
+<path d="M200,338 L280,338" class="ar c"/><text x="115" y="383" text-anchor="middle" class="m">no auth, public</text>
+<path d="M540,98 C700,98 790,140 870,170" class="ar d"/><text x="600" y="91" class="m">INSERT link, own tx</text>
+<path d="M540,214 L870,214" class="ar d"/><text x="600" y="207" class="m">SELECT · aggregate · DELETE</text>
+<path d="M540,300 C640,275 780,265 890,252" class="ar d"/><text x="620" y="264" class="m">SELECT by code</text>
+<path d="M540,345 L590,345" class="ar s"/>
+<path d="M820,330 C870,320 960,300 985,252" class="ar s"/><text x="858" y="352" class="m">INSERT click_event</text>
 </svg>
 <p class="legend">Read:write around 10:1, so the redirection service is the one to cache and replicate first; it shares nothing with the write path except the store.</p>
 
 <h3>API surface</h3>
 <table>
 <tr><th>Endpoint</th><th>Purpose</th><th>Auth</th><th>Success</th><th>Errors</th></tr>
-<tr><td>POST /api/v1/links</td><td>Create a short link from a URL, optional custom alias, optional expiresAt (brownfield)</td><td>API key</td><td>201, Location, LinkResponse</td><td>400 401 409 413 415 429 503</td></tr>
-<tr><td>GET /{code}</td><td>Retrieve the target and redirect</td><td>none</td><td>302 Location, no-store</td><td>404, 410 expired, 503</td></tr>
-<tr><td>HEAD /{code}</td><td>Same resolution, not counted as a click</td><td>none</td><td>302</td><td>404, 410</td></tr>
-<tr><td>GET /api/v1/links/{code}</td><td>Link metadata</td><td>API key</td><td>200 LinkResponse</td><td>401 404</td></tr>
-<tr><td>GET /api/v1/links/{code}/stats</td><td>Total, 24h, 7d, last click; breakdowns only if the ambiguous scenario decides so</td><td>API key</td><td>200 StatsResponse</td><td>401 404</td></tr>
+<tr><td>POST /api/v1/links</td><td>Create a short link from a URL, optional custom alias, optional expiresAt: RFC 3339 with an offset, strictly in the future; a past or zoneless value is 400</td><td>API key</td><td>201, Location, LinkResponse</td><td>400 401 409 413 415 429 503</td></tr>
+<tr><td>GET /{code}</td><td>Retrieve the target and redirect; record the click with its referrer host and utm_* values, which are never forwarded</td><td>none</td><td>302 Location, no-store</td><td>404, 410 link-expired, 503</td></tr>
+<tr><td>HEAD /{code}</td><td>Same resolution, not counted as a click</td><td>none</td><td>302</td><td>404, 410 link-expired</td></tr>
+<tr><td>GET /api/v1/links/{code}</td><td>Link metadata with expiresAt and expired</td><td>API key</td><td>200 LinkResponse</td><td>401 404</td></tr>
+<tr><td>GET /api/v1/links/{code}/stats</td><td>Total, 24h, 7d, last click, expiresAt and expired, plus referrers[] and campaigns[], top ten each</td><td>API key</td><td>200 StatsResponse</td><td>401 404</td></tr>
 <tr><td>DELETE /api/v1/links/{code}</td><td>Delete link and its click events</td><td>API key</td><td>204</td><td>401 404</td></tr>
 <tr><td>GET /actuator/health, /health/liveness, /health/readiness</td><td>Service and database health</td><td>none</td><td>200 or 503</td><td></td></tr>
 <tr><td>GET /actuator/info, /metrics, /prometheus</td><td>Build info, counters, scrape endpoint</td><td>key in prod, open in dev</td><td>200</td><td></td></tr>
@@ -186,7 +188,7 @@
 <h3>Create: POST /api/v1/links</h3>
 <div class="lane">
 <div>1 filters</div><div>Request id assigned. Body over 16 KiB → 413. Bucket empty → 429. Bad key → 401 with WWW-Authenticate.</div>
-<div>2 validate</div><div>Absolute http/https, host present, no user info, ≤ 2048 chars, host not loopback, private, link-local, or metadata. Violations → 400 with <code>errors[]</code>.</div>
+<div>2 validate</div><div>Absolute http/https, host present, no user info, ≤ 2048 chars, host not loopback, private, link-local, or metadata. Optional <code>expiresAt</code> must carry an offset and lie in the future. Violations → 400 with <code>errors[]</code>.</div>
 <div>3 alias?</div><div>If given: regex, reserved list, fast <code>existsByCode</code> → 409 if taken.</div>
 <div>4 allocate</div><div>Loop ≤ 5: draw a code (or use the alias) → <code>LinkAllocator.insert</code> in <em>its own transaction</em>. Unique violation on <code>uk_links_code</code>: random code → retry; alias → 409.</div>
 <div>5 respond</div><div>201, <code>Location: /api/v1/links/{code}</code>, body with shortUrl derived from the request host unless <code>app.base-url</code> is set.</div>
@@ -197,7 +199,7 @@
 <div class="lane">
 <div>1 route</div><div>Path pattern <code>{code:[A-Za-z0-9_-]{4,32}}</code>, so favicon and dotfiles never reach the database.</div>
 <div>2 lookup</div><div>One indexed read by code. Missing → 404. Expired → 410. Both <code>Cache-Control: no-store</code>.</div>
-<div>3 hand off</div><div>Build immutable <code>ClickRecorded(linkId, now, requestId)</code> on the request thread; offer it to the bounded queue. Full queue → drop and count.</div>
+<div>3 hand off</div><div>Build immutable <code>ClickRecorded(linkId, now, requestId, attribution)</code> on the request thread, attribution being the Referer host and the utm_* values, cleaned and bounded; offer it to the bounded queue. Full queue → drop and count.</div>
 <div>4 respond</div><div>302 with <code>Location</code> and explicit <code>no-store</code>. HEAD resolves but is not counted.</div>
 <div>5 async</div><div>Executor thread inserts one row in its own transaction; failures are caught and counted, never propagated.</div>
 </div>
@@ -230,15 +232,16 @@
 
 <h2><span class="n">06</span> Data model and migrations</h2>
 <div class="grid g3">
-<div class="card"><h4>links (V1, greenfield)</h4>
+<div class="card"><h4>links (V1 greenfield, V2 brownfield)</h4>
 <table><tr><th>Column</th><th>Type</th></tr>
-<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>code</td><td>VARCHAR(32), <code>uk_links_code</code> UNIQUE</td></tr><tr><td>original_url</td><td>VARCHAR(2048)</td></tr><tr><td>created_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td>expires_at</td><td>TIMESTAMP WITH TIME ZONE, nullable, <strong>V2 brownfield</strong></td></tr></table></div>
-<div class="card"><h4>click_events (V1)</h4>
+<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>code</td><td>VARCHAR(32), <code>uk_links_code</code> UNIQUE</td></tr><tr><td>original_url</td><td>VARCHAR(2048)</td></tr><tr><td>created_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td>expires_at</td><td>TIMESTAMP WITH TIME ZONE, nullable, <strong>V2 brownfield</strong>; null never expires</td></tr></table></div>
+<div class="card"><h4>click_events (V1 greenfield, V3 ambiguous)</h4>
 <table><tr><th>Column</th><th>Type</th></tr>
-<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>link_id</td><td>BIGINT, FK → links ON DELETE CASCADE</td></tr><tr><td>occurred_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td colspan="2">index <code>(link_id, occurred_at)</code> serves every stats query<br>V3 only if the ambiguous clarification decides so</td></tr></table></div>
+<tr><td>id</td><td>BIGINT identity, PK</td></tr><tr><td>link_id</td><td>BIGINT, FK → links ON DELETE CASCADE</td></tr><tr><td>occurred_at</td><td>TIMESTAMP WITH TIME ZONE</td></tr><tr><td>referrer_host</td><td>VARCHAR(253), nullable, <strong>V3 ambiguous</strong>; host only</td></tr><tr><td>utm_source</td><td>VARCHAR(64), nullable, <strong>V3</strong></td></tr><tr><td>utm_medium</td><td>VARCHAR(64), nullable, <strong>V3</strong></td></tr><tr><td>utm_campaign</td><td>VARCHAR(64), nullable, <strong>V3</strong></td></tr><tr><td colspan="2" style="white-space:normal">index <code>(link_id, occurred_at)</code> serves every stats query<br>No IP, user agent or full referrer URL column; <code>MigrationTest</code> asserts the exact seven-column list</td></tr></table></div>
 <div class="card"><h4>Rules</h4>
-<ul><li>Instant fields map to TIMESTAMP_UTC in Hibernate 7, hence time-zone columns, or startup validation fails.</li><li>One ALTER per column: H2 and PostgreSQL disagree on the multi-column form.</li><li>click_events.link_id is a plain column, so a click is one INSERT with no SELECT.</li><li>No IP, no raw user agent, ever.</li><li>Stats = one aggregate query: count, two conditional sums, max.</li></ul></div>
+<ul><li>Instant fields map to TIMESTAMP_UTC in Hibernate 7, hence time-zone columns, or startup validation fails.</li><li>One ALTER per column: H2 and PostgreSQL disagree on the multi-column form.</li><li>click_events.link_id is a plain column, so a click is one INSERT with no SELECT.</li><li>No IP, no user agent, no full referrer URL, ever (ADR 0006).</li><li>Stats = one aggregate query (count, two conditional sums, max) plus two grouped top-ten queries for referrers and campaigns.</li></ul></div>
 </div>
+<p class="legend">Migrations, validated at every start under ddl-auto=validate: V1__create_links_and_click_events.sql (greenfield) · V2__add_link_expiry.sql (brownfield, one ALTER) · V3__add_click_attribution.sql (ambiguous, four single-column ALTERs)</p>
 
 <h2><span class="n">07</span> Key decisions</h2>
 <table>
@@ -279,7 +282,7 @@
 <div class="card"><h4>What they run</h4><ul><li><code>.\mvnw.cmd -pl url-shortener spring-boot:run</code></li><li>Swagger UI at <code>/swagger-ui.html</code>, Authorize with the dev key</li><li><code>.\mvnw.cmd verify</code> runs every gate and the traceability check</li></ul></div>
 </div>
 
-<footer>Source of truth: docs/design/2026-10-12-system-design.md · This page is self-contained; no external assets.</footer>
+<footer>As built: docs/architecture.md and docs/reference/api.md · dated design record: docs/design/2026-10-12-system-design.md · This page is self-contained; no external assets.</footer>
 </main>
 </body>
 </html>
