@@ -4,7 +4,7 @@ requirement: R-03
 activities: [implement, test-gen]
 impact: high
 impact_reasons: [schema]
-status: in-progress
+status: done
 depends_on: [T-201]
 intent: >
   Implement the slice decided in T-201: store the referring site's host and the campaign
