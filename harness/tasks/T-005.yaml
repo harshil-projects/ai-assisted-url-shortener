@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement]
 impact: normal
 impact_reasons: []
-status: in-progress
+status: done
 depends_on: [T-004]
 intent: >
   Serve GET /{code} as one indexed read returning 302 with an explicit no-store, hand an immutable
