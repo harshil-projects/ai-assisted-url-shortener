@@ -1,10 +1,10 @@
 id: T-201
 title: Normalize the attribution requirement with dated questions, dated answers, and a scoped decision
 requirement: R-03
-activities: [review-prep, document]
+activities: [document]
 impact: normal
 impact_reasons: []
-status: todo
+status: done
 depends_on: [T-010]
 intent: >
   Turn "marketing wants to know where clicks come from" into a requirement that can be built and
