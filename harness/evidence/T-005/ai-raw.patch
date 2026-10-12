@@ -1,0 +1,839 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+new file mode 100644
+index 0000000..2f7ecf6
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+@@ -0,0 +1,112 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.domain.ClickRecorded;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.service.LinkService;
++import io.micrometer.core.instrument.Counter;
++import io.micrometer.core.instrument.MeterRegistry;
++import java.net.URI;
++import java.time.Clock;
++import org.slf4j.MDC;
++import org.springframework.context.ApplicationEventPublisher;
++import org.springframework.http.CacheControl;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RequestMethod;
++import org.springframework.web.bind.annotation.RestController;
++
++/**
++ * The public redirect at {@code GET /{code}} (design 3.6, ADR 0004).
++ *
++ * <p>One indexed lookup, then a 302 to the URL that was validated when the link was created; the
++ * request never influences the target. {@code Cache-Control: no-store} is set here explicitly so
++ * the intent is visible in code and tests, and because a cached redirect would hide deletions and
++ * lose clicks. The click is published as an immutable event before the response is built and the
++ * request is not read again afterwards; the asynchronous recorder owns the rest. {@code HEAD} is
++ * mapped separately so it resolves and reports the same status without counting a click.
++ *
++ * <p>The path pattern admits only strings that could be codes, so browser noise such as {@code
++ * /favicon.ico} is answered by the framework's 404 without a database call.
++ */
++@RestController
++public class RedirectController {
++
++  /** Metric counting resolve outcomes for redirect requests, GET and HEAD alike. */
++  static final String REDIRECTS_METRIC = "shortener.redirects";
++
++  static final String OUTCOME_TAG = "outcome";
++  static final String OUTCOME_HIT = "hit";
++  static final String OUTCOME_MISS = "miss";
++  static final String CODE_PATH = "/{code:[A-Za-z0-9_-]{4,32}}";
++
++  private final LinkService links;
++  private final ApplicationEventPublisher events;
++  private final Clock clock;
++  private final Counter hits;
++  private final Counter misses;
++
++  /**
++   * Creates the controller.
++   *
++   * @param links link lookups
++   * @param events publisher that hands clicks to the recorder
++   * @param clock application clock for the click instant
++   * @param registry metrics registry for {@code shortener.redirects}
++   */
++  public RedirectController(
++      LinkService links, ApplicationEventPublisher events, Clock clock, MeterRegistry registry) {
++    this.links = links;
++    this.events = events;
++    this.clock = clock;
++    this.hits = registry.counter(REDIRECTS_METRIC, OUTCOME_TAG, OUTCOME_HIT);
++    this.misses = registry.counter(REDIRECTS_METRIC, OUTCOME_TAG, OUTCOME_MISS);
++  }
++
++  /**
++   * Redirects to the stored URL and records the click.
++   *
++   * @param code the short code
++   * @return 302 with {@code Location} and {@code Cache-Control: no-store}
++   */
++  @GetMapping(CODE_PATH)
++  public ResponseEntity<Void> redirect(@PathVariable String code) {
++    Link link = resolveCounted(code);
++    events.publishEvent(
++        new ClickRecorded(link.getId(), clock.instant(), MDC.get(ProblemDetails.REQUEST_ID)));
++    return redirectTo(link);
++  }
++
++  /**
++   * Answers a {@code HEAD} probe with the same status and headers as the redirect, without counting
++   * a click.
++   *
++   * @param code the short code
++   * @return 302 with {@code Location} and {@code Cache-Control: no-store}
++   */
++  @RequestMapping(path = CODE_PATH, method = RequestMethod.HEAD)
++  public ResponseEntity<Void> probe(@PathVariable String code) {
++    return redirectTo(resolveCounted(code));
++  }
++
++  private Link resolveCounted(String code) {
++    try {
++      Link link = links.resolve(code);
++      hits.increment();
++      return link;
++    } catch (LinkNotFoundException e) {
++      misses.increment();
++      throw e;
++    }
++  }
++
++  private static ResponseEntity<Void> redirectTo(Link link) {
++    return ResponseEntity.status(HttpStatus.FOUND)
++        .location(URI.create(link.getOriginalUrl()))
++        .cacheControl(CacheControl.noStore())
++        .build();
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/config/ClickRecorderExecutorConfig.java b/url-shortener/src/main/java/dev/harshil/shortener/config/ClickRecorderExecutorConfig.java
+new file mode 100644
+index 0000000..aa166c3
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/config/ClickRecorderExecutorConfig.java
+@@ -0,0 +1,60 @@
++package dev.harshil.shortener.config;
++
++import dev.harshil.shortener.service.ClickRecorder;
++import io.micrometer.core.instrument.Counter;
++import io.micrometer.core.instrument.MeterRegistry;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++import org.springframework.scheduling.annotation.EnableAsync;
++import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
++
++/**
++ * The bounded executor that records clicks (design 3.6, 3.10).
++ *
++ * <p>Sizing is deliberate and fixed in code rather than in properties: two core threads cover the
++ * steady state, four is the ceiling so the recorder never holds more than four of the ten pooled
++ * database connections, and a queue of a thousand absorbs bursts. When even the queue is full the
++ * rejection handler drops the click and increments {@code
++ * shortener.clicks.dropped{reason=saturated}} instead of blocking the request thread or throwing
++ * into it. On shutdown the executor drains for up to ten seconds, inside Boot's twenty-second
++ * graceful window, so in-flight clicks are kept.
++ *
++ * <p>{@code defaultCandidate = false} keeps this executor out of by-type autowiring, so Boot's
++ * {@code applicationTaskExecutor} remains the default for everything else; the recorder selects it
++ * by name.
++ */
++@Configuration(proxyBeanMethods = false)
++@EnableAsync
++public class ClickRecorderExecutorConfig {
++
++  /** Bean name the recorder's {@code @Async} refers to. */
++  public static final String EXECUTOR_BEAN = "clickRecorderExecutor";
++
++  static final int CORE_POOL_SIZE = 2;
++  static final int MAX_POOL_SIZE = 4;
++  static final int QUEUE_CAPACITY = 1000;
++  static final int AWAIT_TERMINATION_SECONDS = 10;
++  static final String THREAD_NAME_PREFIX = "click-recorder-";
++
++  /**
++   * Builds the executor; Spring initialises it through {@code afterPropertiesSet}.
++   *
++   * @param registry metrics registry for the saturation counter
++   * @return the configured, not yet initialised, executor
++   */
++  @Bean(name = EXECUTOR_BEAN, defaultCandidate = false)
++  ThreadPoolTaskExecutor clickRecorderExecutor(MeterRegistry registry) {
++    Counter droppedOnSaturation =
++        registry.counter(
++            ClickRecorder.DROPPED_METRIC, ClickRecorder.REASON_TAG, ClickRecorder.REASON_SATURATED);
++    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
++    executor.setCorePoolSize(CORE_POOL_SIZE);
++    executor.setMaxPoolSize(MAX_POOL_SIZE);
++    executor.setQueueCapacity(QUEUE_CAPACITY);
++    executor.setThreadNamePrefix(THREAD_NAME_PREFIX);
++    executor.setWaitForTasksToCompleteOnShutdown(true);
++    executor.setAwaitTerminationSeconds(AWAIT_TERMINATION_SECONDS);
++    executor.setRejectedExecutionHandler((task, pool) -> droppedOnSaturation.increment());
++    return executor;
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java
+new file mode 100644
+index 0000000..a6473e1
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java
+@@ -0,0 +1,15 @@
++package dev.harshil.shortener.domain;
++
++import java.time.Instant;
++
++/**
++ * Immutable fact that a redirect was served, built on the request thread and handed to the click
++ * recorder's executor (design 3.6, ADR 0005). It carries everything the recorder needs so nothing
++ * from the servlet request is ever read off the request thread, and the request id so the
++ * asynchronous log line can be correlated with the redirect that caused it.
++ *
++ * @param linkId identifier of the link that was followed
++ * @param occurredAt the instant the redirect was served, from the application clock
++ * @param requestId the correlation id of the redirect request, or {@code null} when none was set
++ */
++public record ClickRecorded(Long linkId, Instant occurredAt, String requestId) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java b/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java
+new file mode 100644
+index 0000000..0c071cb
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java
+@@ -0,0 +1,70 @@
++package dev.harshil.shortener.service;
++
++import dev.harshil.shortener.config.ClickRecorderExecutorConfig;
++import dev.harshil.shortener.domain.ClickEvent;
++import dev.harshil.shortener.domain.ClickRecorded;
++import dev.harshil.shortener.domain.LogSanitizer;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import io.micrometer.core.instrument.Counter;
++import io.micrometer.core.instrument.MeterRegistry;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.context.event.EventListener;
++import org.springframework.scheduling.annotation.Async;
++import org.springframework.stereotype.Component;
++
++/**
++ * Persists {@link ClickRecorded} events off the request thread (design 3.6, ADR 0005).
++ *
++ * <p>The listener runs on the dedicated {@code clickRecorderExecutor}, so a slow or failing insert
++ * can never delay or fail a redirect. Every failure is caught here, logged once with the request id
++ * and counted under {@code shortener.clicks.dropped{reason=error}}; it is never rethrown, because
++ * there is no caller left to inform and an exception on the executor thread would only produce an
++ * uncounted stack trace. Each save runs in the repository's own transaction.
++ */
++@Component
++public class ClickRecorder {
++
++  /** Counter for clicks that were not persisted, tagged with the reason. */
++  public static final String DROPPED_METRIC = "shortener.clicks.dropped";
++
++  public static final String REASON_TAG = "reason";
++  public static final String REASON_ERROR = "error";
++  public static final String REASON_SATURATED = "saturated";
++
++  private static final Logger log = LoggerFactory.getLogger(ClickRecorder.class);
++
++  private final ClickEventRepository clickEvents;
++  private final Counter droppedOnError;
++
++  /**
++   * Creates the recorder.
++   *
++   * @param clickEvents click persistence
++   * @param registry metrics registry for the dropped counter
++   */
++  public ClickRecorder(ClickEventRepository clickEvents, MeterRegistry registry) {
++    this.clickEvents = clickEvents;
++    this.droppedOnError = registry.counter(DROPPED_METRIC, REASON_TAG, REASON_ERROR);
++  }
++
++  /**
++   * Stores one click. Runs asynchronously on the click executor.
++   *
++   * @param event the redirect that was served
++   */
++  @Async(ClickRecorderExecutorConfig.EXECUTOR_BEAN)
++  @EventListener
++  public void on(ClickRecorded event) {
++    try {
++      clickEvents.save(new ClickEvent(event.linkId(), event.occurredAt()));
++    } catch (RuntimeException e) {
++      droppedOnError.increment();
++      log.error(
++          "Click for link {} dropped; requestId={}",
++          event.linkId(),
++          LogSanitizer.sanitize(event.requestId()),
++          e);
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java
+new file mode 100644
+index 0000000..c0f047d
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java
+@@ -0,0 +1,94 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.awaitility.Awaitility.await;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.doThrow;
++
++import dev.harshil.shortener.domain.ClickEvent;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.service.ClickRecorder;
++import dev.harshil.shortener.support.TestProfile;
++import io.micrometer.core.instrument.MeterRegistry;
++import java.time.Duration;
++import java.time.Instant;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.dao.DataAccessResourceFailureException;
++import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * Click recording end to end: the redirect returns first, the click lands later on the recorder
++ * executor, and a failing insert never reaches the client.
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class ClickRecordingIT {
++
++  private static final Duration AT_MOST = Duration.ofSeconds(5);
++  private static final Duration SETTLE = Duration.ofMillis(500);
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private MeterRegistry registry;
++  @MockitoSpyBean private ClickEventRepository clickEvents;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void get_redirect_recordsExactlyOneClickForTheLinkAsynchronously() {
++    Link link = links.save(new Link("click01", "https://example.com/c", Instant.now()));
++
++    client.get().uri("/click01").exchange().expectStatus().isFound();
++
++    await().atMost(AT_MOST).untilAsserted(() -> assertThat(clickEvents.count()).isEqualTo(1));
++    ClickEvent recorded = clickEvents.findAll().get(0);
++    assertThat(recorded.getLinkId()).isEqualTo(link.getId());
++    assertThat(recorded.getOccurredAt()).isNotNull();
++  }
++
++  @Test
++  void head_redirect_recordsNoClick() {
++    links.save(new Link("head001", "https://example.com/h", Instant.now()));
++
++    client.head().uri("/head001").exchange().expectStatus().isFound();
++    client.get().uri("/head001").exchange().expectStatus().isFound();
++
++    await().atMost(AT_MOST).untilAsserted(() -> assertThat(clickEvents.count()).isEqualTo(1));
++    await().during(SETTLE).atMost(AT_MOST).until(() -> clickEvents.count() == 1);
++  }
++
++  @Test
++  void get_redirect_whenTheInsertFails_stillReturns302AndCountsTheDrop() {
++    links.save(new Link("fail001", "https://example.com/f", Instant.now()));
++    doThrow(new DataAccessResourceFailureException("database gone"))
++        .when(clickEvents)
++        .save(any(ClickEvent.class));
++    double droppedBefore = droppedForError();
++
++    client.get().uri("/fail001").exchange().expectStatus().isFound();
++
++    await()
++        .atMost(AT_MOST)
++        .untilAsserted(() -> assertThat(droppedForError()).isEqualTo(droppedBefore + 1));
++    assertThat(clickEvents.count()).isZero();
++  }
++
++  private double droppedForError() {
++    return registry
++        .counter(ClickRecorder.DROPPED_METRIC, ClickRecorder.REASON_TAG, ClickRecorder.REASON_ERROR)
++        .count();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java
+new file mode 100644
+index 0000000..54b5d01
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java
+@@ -0,0 +1,159 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.Mockito.verifyNoInteractions;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.config.SecurityConfig;
++import dev.harshil.shortener.domain.ClickRecorded;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.service.LinkService;
++import dev.harshil.shortener.support.TestProfile;
++import io.micrometer.core.instrument.MeterRegistry;
++import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
++import java.time.Clock;
++import java.time.Instant;
++import java.time.ZoneOffset;
++import java.util.List;
++import java.util.concurrent.CopyOnWriteArrayList;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.test.context.TestConfiguration;
++import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Import;
++import org.springframework.context.event.EventListener;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++import org.springframework.test.util.ReflectionTestUtils;
++import org.springframework.test.web.servlet.assertj.MockMvcTester;
++
++/**
++ * Web slice for the redirect: status, headers, the published click event and the outcome counters.
++ * A synchronous listener stands in for the asynchronous recorder so the event can be inspected.
++ */
++@WebMvcTest(RedirectController.class)
++@Import({SecurityConfig.class, RedirectControllerTest.SliceSupport.class})
++@TestProfile
++class RedirectControllerTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++  private static final String TARGET = "https://example.com/landing?x=1";
++
++  @Autowired private MockMvcTester mvc;
++  @Autowired private ClickSink clicks;
++  @Autowired private MeterRegistry registry;
++  @MockitoBean private LinkService linkService;
++
++  @BeforeEach
++  void stubKnownLink() {
++    Link link = new Link("abcdefg", TARGET, NOW.minusSeconds(3600));
++    ReflectionTestUtils.setField(link, "id", 42L);
++    when(linkService.resolve("abcdefg")).thenReturn(link);
++    when(linkService.resolve("missing")).thenThrow(new LinkNotFoundException("missing"));
++    clicks.events().clear();
++  }
++
++  @Test
++  void get_knownCode_returns302WithStoredLocationAndExplicitNoStore() {
++    assertThat(mvc.get().uri("/abcdefg"))
++        .hasStatus(HttpStatus.FOUND)
++        .hasHeader(HttpHeaders.LOCATION, TARGET)
++        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store");
++  }
++
++  @Test
++  void get_knownCode_publishesOneClickWithLinkIdAndClockInstant() {
++    double hitsBefore = hits();
++
++    assertThat(mvc.get().uri("/abcdefg")).hasStatus(HttpStatus.FOUND);
++
++    assertThat(clicks.events()).containsExactly(new ClickRecorded(42L, NOW, null));
++    assertThat(hits()).isEqualTo(hitsBefore + 1);
++  }
++
++  @Test
++  void head_knownCode_returns302WithSameHeadersAndPublishesNothing() {
++    assertThat(mvc.head().uri("/abcdefg"))
++        .hasStatus(HttpStatus.FOUND)
++        .hasHeader(HttpHeaders.LOCATION, TARGET)
++        .hasHeader(HttpHeaders.CACHE_CONTROL, "no-store");
++
++    assertThat(clicks.events()).isEmpty();
++  }
++
++  @Test
++  void get_unknownCode_returns404LinkNotFoundProblemAndCountsAMiss() {
++    double missesBefore = misses();
++
++    assertThat(mvc.get().uri("/missing"))
++        .hasStatus(HttpStatus.NOT_FOUND)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/link-not-found"));
++
++    assertThat(clicks.events()).isEmpty();
++    assertThat(misses()).isEqualTo(missesBefore + 1);
++  }
++
++  @Test
++  void get_pathFailingTheCodePattern_returns404WithoutResolvingAnything() {
++    assertThat(mvc.get().uri("/favicon.ico")).hasStatus(HttpStatus.NOT_FOUND);
++    assertThat(mvc.get().uri("/abc")).hasStatus(HttpStatus.NOT_FOUND);
++
++    verifyNoInteractions(linkService);
++    assertThat(clicks.events()).isEmpty();
++  }
++
++  @Test
++  void get_redirect_isPublicAndNeedsNoApiKey() {
++    assertThat(mvc.get().uri("/abcdefg")).hasStatus(HttpStatus.FOUND);
++  }
++
++  private double hits() {
++    return registry.counter("shortener.redirects", "outcome", "hit").count();
++  }
++
++  private double misses() {
++    return registry.counter("shortener.redirects", "outcome", "miss").count();
++  }
++
++  /** Captures published click events synchronously so the test can assert on them. */
++  static final class ClickSink {
++
++    private final List<ClickRecorded> events = new CopyOnWriteArrayList<>();
++
++    @EventListener
++    void on(ClickRecorded event) {
++      events.add(event);
++    }
++
++    List<ClickRecorded> events() {
++      return events;
++    }
++  }
++
++  @TestConfiguration(proxyBeanMethods = false)
++  static class SliceSupport {
++
++    @Bean
++    Clock clock() {
++      return Clock.fixed(NOW, ZoneOffset.UTC);
++    }
++
++    @Bean
++    MeterRegistry meterRegistry() {
++      return new SimpleMeterRegistry();
++    }
++
++    @Bean
++    ClickSink clickSink() {
++      return new ClickSink();
++    }
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java
+new file mode 100644
+index 0000000..5123a70
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java
+@@ -0,0 +1,111 @@
++package dev.harshil.shortener.api;
++
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.verify;
++
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/** The public redirect over HTTP; the test client does not follow redirects. */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class RedirectIT {
++
++  private static final String TARGET = "https://example.com/landing?utm=short";
++
++  @Autowired private RestTestClient client;
++  @Autowired private ClickEventRepository clickEvents;
++  @MockitoSpyBean private LinkRepository links;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void get_knownCode_returns302WithStoredLocationAndNoStore() {
++    links.save(new Link("redir01", TARGET, Instant.now()));
++
++    client
++        .get()
++        .uri("/redir01")
++        .exchange()
++        .expectStatus()
++        .isFound()
++        .expectHeader()
++        .valueEquals(HttpHeaders.LOCATION, TARGET)
++        .expectHeader()
++        .valueEquals(HttpHeaders.CACHE_CONTROL, "no-store");
++  }
++
++  @Test
++  void head_knownCode_returns302WithTheSameLocation() {
++    links.save(new Link("probe01", TARGET, Instant.now()));
++
++    client
++        .head()
++        .uri("/probe01")
++        .exchange()
++        .expectStatus()
++        .isFound()
++        .expectHeader()
++        .valueEquals(HttpHeaders.LOCATION, TARGET);
++  }
++
++  @Test
++  void get_unknownCode_returns404LinkNotFoundProblem() {
++    client
++        .get()
++        .uri("/unknown1")
++        .exchange()
++        .expectStatus()
++        .isNotFound()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/link-not-found")
++        .jsonPath("$.status")
++        .isEqualTo(404)
++        .jsonPath("$.timestamp")
++        .exists();
++  }
++
++  @Test
++  void get_faviconIco_returns404WithoutTouchingTheRepository() {
++    client.get().uri("/favicon.ico").exchange().expectStatus().isNotFound();
++
++    verify(links, never()).findByCode(anyString());
++  }
++
++  @Test
++  void get_codeShorterThanThePattern_returns404WithoutTouchingTheRepository() {
++    client
++        .get()
++        .uri("/abc")
++        .exchange()
++        .expectStatus()
++        .isNotFound()
++        .expectBody()
++        .jsonPath("$.detail")
++        .isEqualTo("No resource at this path");
++
++    verify(links, never()).findByCode(anyString());
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/config/ClickRecorderExecutorConfigTest.java b/url-shortener/src/test/java/dev/harshil/shortener/config/ClickRecorderExecutorConfigTest.java
+new file mode 100644
+index 0000000..6f6fe2b
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/config/ClickRecorderExecutorConfigTest.java
+@@ -0,0 +1,84 @@
++package dev.harshil.shortener.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.junit.jupiter.api.Assertions.assertTimeout;
++
++import dev.harshil.shortener.service.ClickRecorder;
++import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
++import java.time.Duration;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
++
++class ClickRecorderExecutorConfigTest {
++
++  private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
++  private final CountDownLatch gate = new CountDownLatch(1);
++  private ThreadPoolTaskExecutor executor;
++
++  @BeforeEach
++  void createExecutor() {
++    executor = new ClickRecorderExecutorConfig().clickRecorderExecutor(registry);
++    executor.initialize();
++  }
++
++  @AfterEach
++  void releaseAndShutDown() {
++    gate.countDown();
++    executor.shutdown();
++  }
++
++  @Test
++  void clickRecorderExecutor_hasTheDesignedBounds() {
++    assertThat(executor.getCorePoolSize()).isEqualTo(2);
++    assertThat(executor.getMaxPoolSize()).isEqualTo(4);
++    assertThat(executor.getQueueCapacity()).isEqualTo(1000);
++    assertThat(executor.getThreadNamePrefix()).isEqualTo("click-recorder-");
++  }
++
++  @Test
++  void clickRecorderExecutor_runsTasksOnThreadsCarryingThePrefix() throws Exception {
++    CompletableFuture<String> threadName = new CompletableFuture<>();
++
++    executor.execute(() -> threadName.complete(Thread.currentThread().getName()));
++
++    assertThat(threadName.get(5, TimeUnit.SECONDS)).startsWith("click-recorder-");
++  }
++
++  @Test
++  void clickRecorderExecutor_whenQueueAndThreadsAreFull_dropsCountsAndDoesNotBlock() {
++    int accepted =
++        ClickRecorderExecutorConfig.MAX_POOL_SIZE + ClickRecorderExecutorConfig.QUEUE_CAPACITY;
++    for (int i = 0; i < accepted; i++) {
++      executor.execute(this::blockUntilReleased);
++    }
++    assertThat(executor.getThreadPoolExecutor().getQueue())
++        .hasSize(ClickRecorderExecutorConfig.QUEUE_CAPACITY);
++    assertThat(droppedForSaturation()).isZero();
++
++    assertTimeout(Duration.ofSeconds(2), () -> executor.execute(this::blockUntilReleased));
++
++    assertThat(droppedForSaturation()).isEqualTo(1.0);
++    assertThat(executor.getThreadPoolExecutor().getQueue())
++        .hasSize(ClickRecorderExecutorConfig.QUEUE_CAPACITY);
++  }
++
++  private void blockUntilReleased() {
++    try {
++      gate.await();
++    } catch (InterruptedException e) {
++      Thread.currentThread().interrupt();
++    }
++  }
++
++  private double droppedForSaturation() {
++    return registry
++        .counter(
++            ClickRecorder.DROPPED_METRIC, ClickRecorder.REASON_TAG, ClickRecorder.REASON_SATURATED)
++        .count();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java
+new file mode 100644
+index 0000000..78d3876
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java
+@@ -0,0 +1,80 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatCode;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.domain.ClickEvent;
++import dev.harshil.shortener.domain.ClickRecorded;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
++import java.time.Instant;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.ArgumentCaptor;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.springframework.dao.DataAccessResourceFailureException;
++
++@ExtendWith(MockitoExtension.class)
++class ClickRecorderTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T10:00:00Z");
++  private static final ClickRecorded EVENT = new ClickRecorded(7L, NOW, "req-7");
++
++  @Mock private ClickEventRepository clickEvents;
++
++  private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
++  private ClickRecorder recorder;
++
++  @BeforeEach
++  void createRecorder() {
++    recorder = new ClickRecorder(clickEvents, registry);
++  }
++
++  @Test
++  void on_event_savesOneClickEventCarryingLinkIdAndInstant() {
++    recorder.on(EVENT);
++
++    ArgumentCaptor<ClickEvent> saved = ArgumentCaptor.forClass(ClickEvent.class);
++    verify(clickEvents).save(saved.capture());
++    assertThat(saved.getValue().getLinkId()).isEqualTo(7L);
++    assertThat(saved.getValue().getOccurredAt()).isEqualTo(NOW);
++  }
++
++  @Test
++  void on_successfulSave_doesNotCountADrop() {
++    recorder.on(EVENT);
++
++    assertThat(droppedForError()).isZero();
++  }
++
++  @Test
++  void on_repositoryThrows_swallowsTheExceptionAndCountsOneDropWithReasonError() {
++    when(clickEvents.save(any(ClickEvent.class)))
++        .thenThrow(new DataAccessResourceFailureException("database gone"));
++
++    assertThatCode(() -> recorder.on(EVENT)).doesNotThrowAnyException();
++
++    assertThat(droppedForError()).isEqualTo(1.0);
++  }
++
++  @Test
++  void on_repositoryThrowsTwice_countsEachDropSeparately() {
++    when(clickEvents.save(any(ClickEvent.class))).thenThrow(new IllegalStateException("boom"));
++
++    recorder.on(EVENT);
++    recorder.on(new ClickRecorded(8L, NOW, null));
++
++    assertThat(droppedForError()).isEqualTo(2.0);
++  }
++
++  private double droppedForError() {
++    return registry
++        .counter(ClickRecorder.DROPPED_METRIC, ClickRecorder.REASON_TAG, ClickRecorder.REASON_ERROR)
++        .count();
++  }
++}

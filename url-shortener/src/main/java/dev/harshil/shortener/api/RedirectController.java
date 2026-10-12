@@ -6,6 +6,9 @@ import dev.harshil.shortener.domain.LinkNotFoundException;
 import dev.harshil.shortener.service.LinkService;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import java.net.URI;
 import java.time.Clock;
 import org.slf4j.MDC;
@@ -17,6 +20,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -72,6 +76,14 @@ public class RedirectController {
    * @param code the short code
    * @return 302 with {@code Location} and {@code Cache-Control: no-store}
    */
+  @Operation(
+      summary = "Follow a short link",
+      security = {})
+  @ApiResponse(
+      responseCode = "302",
+      description = "Redirect to the stored URL; Cache-Control is no-store",
+      content = @Content)
+  @ResponseStatus(HttpStatus.FOUND)
   @GetMapping(CODE_PATH)
   public ResponseEntity<Void> redirect(@PathVariable String code) {
     Link link = resolveCounted(code);
@@ -87,6 +99,11 @@ public class RedirectController {
    * @param code the short code
    * @return 302 with {@code Location} and {@code Cache-Control: no-store}
    */
+  @Operation(
+      summary = "Probe a short link without recording a click",
+      security = {})
+  @ApiResponse(responseCode = "302", description = "Same as GET", content = @Content)
+  @ResponseStatus(HttpStatus.FOUND)
   @RequestMapping(path = CODE_PATH, method = RequestMethod.HEAD)
   public ResponseEntity<Void> probe(@PathVariable String code) {
     return redirectTo(resolveCounted(code));
