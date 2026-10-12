@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement, test-gen]
 impact: high
 impact_reasons: [schema]
-status: in-progress
+status: done
 depends_on: [T-001]
 intent: >
   Create the minimal greenfield schema through Flyway V1, the Link and ClickEvent entities, the two
