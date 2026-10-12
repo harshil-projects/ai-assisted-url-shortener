@@ -4,7 +4,7 @@ requirement: R-01
 activities: [implement]
 impact: normal
 impact_reasons: []
-status: todo
+status: in-progress
 depends_on: [T-002, T-003]
 intent: >
   Expose POST /api/v1/links so clients create short links from validated URLs, with the allocation

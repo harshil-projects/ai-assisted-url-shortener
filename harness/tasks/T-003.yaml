@@ -4,7 +4,7 @@ requirement: R-01
 activities: [test-gen, implement]
 impact: high
 impact_reasons: [security]
-status: todo
+status: in-progress
 depends_on: [T-001]
 intent: >
   Build the pure-logic classes the create path depends on, tests first: the SecureRandom Base62

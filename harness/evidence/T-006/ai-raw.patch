@@ -1,0 +1,575 @@
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/StatsController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/StatsController.java
+new file mode 100644
+index 0000000..165d0ac
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/StatsController.java
+@@ -0,0 +1,42 @@
++package dev.harshil.shortener.api;
++
++import dev.harshil.shortener.api.dto.StatsResponse;
++import dev.harshil.shortener.service.AnalyticsService;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RestController;
++
++/**
++ * Click statistics at {@code GET /api/v1/links/{code}/stats} (design 3.3), protected by the API
++ * key. Kept apart from {@link LinkController} because it depends on the analytics service, not on
++ * link management, and because the ambiguous scenario may grow it independently.
++ */
++@RestController
++@RequestMapping("/api/v1/links")
++public class StatsController {
++
++  static final String STATS_PATH = "/{code:[A-Za-z0-9_-]{4,32}}/stats";
++
++  private final AnalyticsService analytics;
++
++  /**
++   * Creates the controller.
++   *
++   * @param analytics the stats computation
++   */
++  public StatsController(AnalyticsService analytics) {
++    this.analytics = analytics;
++  }
++
++  /**
++   * Returns the statistics for a link.
++   *
++   * @param code the short code
++   * @return 200 with the statistics
++   */
++  @GetMapping(STATS_PATH)
++  public StatsResponse stats(@PathVariable String code) {
++    return analytics.stats(code);
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+new file mode 100644
+index 0000000..be9546f
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+@@ -0,0 +1,15 @@
++package dev.harshil.shortener.api.dto;
++
++import java.time.Instant;
++
++/**
++ * Click statistics for one link (design 3.3), computed by a single aggregate query.
++ *
++ * @param code the short code
++ * @param totalClicks every recorded click
++ * @param clicksLast24h clicks in the 24 hours before the request, inclusive of the boundary
++ * @param clicksLast7d clicks in the 7 days before the request, inclusive of the boundary
++ * @param lastClickedAt the most recent click, or {@code null} when the link was never followed
++ */
++public record StatsResponse(
++    String code, Long totalClicks, Long clicksLast24h, Long clicksLast7d, Instant lastClickedAt) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+new file mode 100644
+index 0000000..18cdc47
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+@@ -0,0 +1,64 @@
++package dev.harshil.shortener.service;
++
++import dev.harshil.shortener.api.dto.StatsResponse;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.ClickSummary;
++import dev.harshil.shortener.repository.LinkRepository;
++import java.time.Clock;
++import java.time.Duration;
++import java.time.Instant;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++/**
++ * Answers the stats endpoint with two statements: the link lookup and one aggregate over the {@code
++ * (link_id, occurred_at)} index (design 3.6). Both run in a single read-only transaction so they
++ * see one consistent snapshot, and the time windows are cut from the injected clock, which keeps
++ * the arithmetic in UTC and lets tests pin "now".
++ */
++@Service
++public class AnalyticsService {
++
++  static final Duration LAST_24H = Duration.ofHours(24);
++  static final Duration LAST_7D = Duration.ofDays(7);
++
++  private final LinkRepository links;
++  private final ClickEventRepository clickEvents;
++  private final Clock clock;
++
++  /**
++   * Creates the service.
++   *
++   * @param links link persistence
++   * @param clickEvents click persistence with the aggregate query
++   * @param clock application clock the windows are relative to
++   */
++  public AnalyticsService(LinkRepository links, ClickEventRepository clickEvents, Clock clock) {
++    this.links = links;
++    this.clickEvents = clickEvents;
++    this.clock = clock;
++  }
++
++  /**
++   * Computes the statistics for a link.
++   *
++   * @param code the short code
++   * @return totals, windowed counts and the last click
++   * @throws LinkNotFoundException when no link has that code
++   */
++  @Transactional(readOnly = true)
++  public StatsResponse stats(String code) {
++    Link link = links.findByCode(code).orElseThrow(() -> new LinkNotFoundException(code));
++    Instant now = clock.instant();
++    ClickSummary summary =
++        clickEvents.summarize(link.getId(), now.minus(LAST_24H), now.minus(LAST_7D));
++    return new StatsResponse(
++        link.getCode(),
++        summary.total(),
++        summary.last24h(),
++        summary.last7d(),
++        summary.lastClickedAt());
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java
+new file mode 100644
+index 0000000..226937c
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java
+@@ -0,0 +1,101 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.awaitility.Awaitility.await;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.api.dto.LinkResponse;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Duration;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/** Hard delete over HTTP, verified through the repositories so the database cascade is proven. */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class LinkManagementIT {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String LINKS = "/api/v1/links";
++  private static final Duration AT_MOST = Duration.ofSeconds(5);
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private ClickEventRepository clickEvents;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void delete_linkWithClicks_returns204AndRemovesTheLinkAndItsEvents() {
++    String code = createLink("https://example.com/to-delete");
++    client.get().uri("/" + code).exchange().expectStatus().isFound();
++    await().atMost(AT_MOST).untilAsserted(() -> assertThat(clickEvents.count()).isEqualTo(1));
++
++    delete(code).expectStatus().isNoContent().expectBody().isEmpty();
++
++    assertThat(links.findByCode(code)).isEmpty();
++    assertThat(clickEvents.count()).isZero();
++  }
++
++  @Test
++  void delete_twice_secondCallReturns404LinkNotFound() {
++    String code = createLink("https://example.com/once");
++
++    delete(code).expectStatus().isNoContent();
++    delete(code)
++        .expectStatus()
++        .isNotFound()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/link-not-found")
++        .jsonPath("$.timestamp")
++        .exists();
++  }
++
++  @Test
++  void delete_withoutApiKey_returns401AndKeepsTheLink() {
++    String code = createLink("https://example.com/kept");
++
++    client.delete().uri(LINKS + "/" + code).exchange().expectStatus().isUnauthorized();
++
++    assertThat(links.existsByCode(code)).isTrue();
++  }
++
++  private RestTestClient.ResponseSpec delete(String code) {
++    return client.delete().uri(LINKS + "/" + code).header(API_KEY_HEADER, API_KEY).exchange();
++  }
++
++  private String createLink(String url) {
++    LinkResponse body =
++        client
++            .post()
++            .uri(LINKS)
++            .header(API_KEY_HEADER, API_KEY)
++            .contentType(MediaType.APPLICATION_JSON)
++            .body(new CreateLinkRequest(url, null))
++            .exchange()
++            .expectStatus()
++            .isCreated()
++            .expectBody(LinkResponse.class)
++            .returnResult()
++            .getResponseBody();
++    assertThat(body).isNotNull();
++    return body.code();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java
+new file mode 100644
+index 0000000..f1ce94e
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java
+@@ -0,0 +1,90 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.Mockito.verifyNoInteractions;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.api.dto.StatsResponse;
++import dev.harshil.shortener.config.SecurityConfig;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.service.AnalyticsService;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Instant;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
++import org.springframework.context.annotation.Import;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.MediaType;
++import org.springframework.test.context.bean.override.mockito.MockitoBean;
++import org.springframework.test.web.servlet.assertj.MockMvcTester;
++
++@WebMvcTest(StatsController.class)
++@Import(SecurityConfig.class)
++@TestProfile
++class StatsControllerTest {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String STATS = "/api/v1/links/abcdefg/stats";
++
++  @Autowired private MockMvcTester mvc;
++  @MockitoBean private AnalyticsService analyticsService;
++
++  @Test
++  void stats_knownCodeWithKey_returns200WithEveryField() {
++    Instant lastClick = Instant.parse("2026-10-12T11:57:00Z");
++    when(analyticsService.stats("abcdefg"))
++        .thenReturn(new StatsResponse("abcdefg", 10L, 2L, 7L, lastClick));
++
++    assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
++        .hasStatusOk()
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_JSON)
++        .bodyJson()
++        .hasPathSatisfying("$.code", code -> code.assertThat().isEqualTo("abcdefg"))
++        .hasPathSatisfying("$.totalClicks", total -> total.assertThat().isEqualTo(10))
++        .hasPathSatisfying("$.clicksLast24h", day -> day.assertThat().isEqualTo(2))
++        .hasPathSatisfying("$.clicksLast7d", week -> week.assertThat().isEqualTo(7))
++        .hasPathSatisfying(
++            "$.lastClickedAt", at -> at.assertThat().isEqualTo("2026-10-12T11:57:00Z"));
++  }
++
++  @Test
++  void stats_linkNeverClicked_rendersNullLastClickedAtExplicitly() {
++    when(analyticsService.stats("abcdefg"))
++        .thenReturn(new StatsResponse("abcdefg", 0L, 0L, 0L, null));
++
++    assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
++        .hasStatusOk()
++        .bodyJson()
++        .hasPathSatisfying("$.totalClicks", total -> total.assertThat().isEqualTo(0))
++        .hasPathSatisfying("$.lastClickedAt", at -> at.assertThat().isNull());
++  }
++
++  @Test
++  void stats_unknownCode_returns404LinkNotFoundProblem() {
++    when(analyticsService.stats("abcdefg")).thenThrow(new LinkNotFoundException("abcdefg"));
++
++    assertThat(mvc.get().uri(STATS).header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NOT_FOUND)
++        .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .bodyJson()
++        .hasPathSatisfying(
++            "$.type", type -> type.assertThat().isEqualTo("/problems/link-not-found"));
++  }
++
++  @Test
++  void stats_withoutApiKey_returns401AndNeverReachesTheService() {
++    assertThat(mvc.get().uri(STATS)).hasStatus(HttpStatus.UNAUTHORIZED);
++
++    verifyNoInteractions(analyticsService);
++  }
++
++  @Test
++  void stats_codeFailingThePathPattern_returns404WithoutCallingTheService() {
++    assertThat(mvc.get().uri("/api/v1/links/ab/stats").header(API_KEY_HEADER, API_KEY))
++        .hasStatus(HttpStatus.NOT_FOUND);
++
++    verifyNoInteractions(analyticsService);
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java
+new file mode 100644
+index 0000000..781f736
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java
+@@ -0,0 +1,138 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.awaitility.Awaitility.await;
++
++import dev.harshil.shortener.api.dto.CreateLinkRequest;
++import dev.harshil.shortener.api.dto.LinkResponse;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Duration;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.MediaType;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/** Stats over HTTP: create, redirect, then read the aggregate once the asynchronous clicks land. */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class StatsIT {
++
++  private static final String API_KEY_HEADER = "X-API-Key";
++  private static final String API_KEY = "test-api-key";
++  private static final String LINKS = "/api/v1/links";
++  private static final Duration AT_MOST = Duration.ofSeconds(5);
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private ClickEventRepository clickEvents;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void stats_linkWithoutClicks_returnsZerosAndNullLastClickedAt() {
++    String code = createLink("https://example.com/quiet");
++
++    stats(code)
++        .expectStatus()
++        .isOk()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
++        .expectBody()
++        .jsonPath("$.code")
++        .isEqualTo(code)
++        .jsonPath("$.totalClicks")
++        .isEqualTo(0)
++        .jsonPath("$.clicksLast24h")
++        .isEqualTo(0)
++        .jsonPath("$.clicksLast7d")
++        .isEqualTo(0)
++        .jsonPath("$.lastClickedAt")
++        .isEmpty();
++  }
++
++  @Test
++  void stats_afterTwoRedirects_countsTwoInEveryWindowAndSetsLastClickedAt() {
++    String code = createLink("https://example.com/busy");
++    client.get().uri("/" + code).exchange().expectStatus().isFound();
++    client.get().uri("/" + code).exchange().expectStatus().isFound();
++
++    await()
++        .atMost(AT_MOST)
++        .untilAsserted(() -> stats(code).expectBody().jsonPath("$.totalClicks").isEqualTo(2));
++
++    stats(code)
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.totalClicks")
++        .isEqualTo(2)
++        .jsonPath("$.clicksLast24h")
++        .isEqualTo(2)
++        .jsonPath("$.clicksLast7d")
++        .isEqualTo(2)
++        .jsonPath("$.lastClickedAt")
++        .isNotEmpty();
++  }
++
++  @Test
++  void stats_unknownCode_returns404LinkNotFoundProblem() {
++    stats("unknown1")
++        .expectStatus()
++        .isNotFound()
++        .expectHeader()
++        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/link-not-found");
++  }
++
++  @Test
++  void stats_withoutApiKey_returns401() {
++    client
++        .get()
++        .uri(LINKS + "/abcdefg/stats")
++        .exchange()
++        .expectStatus()
++        .isUnauthorized()
++        .expectBody()
++        .jsonPath("$.type")
++        .isEqualTo("/problems/unauthorized");
++  }
++
++  private RestTestClient.ResponseSpec stats(String code) {
++    return client
++        .get()
++        .uri(LINKS + "/" + code + "/stats")
++        .header(API_KEY_HEADER, API_KEY)
++        .exchange();
++  }
++
++  private String createLink(String url) {
++    LinkResponse body =
++        client
++            .post()
++            .uri(LINKS)
++            .header(API_KEY_HEADER, API_KEY)
++            .contentType(MediaType.APPLICATION_JSON)
++            .body(new CreateLinkRequest(url, null))
++            .exchange()
++            .expectStatus()
++            .isCreated()
++            .expectBody(LinkResponse.class)
++            .returnResult()
++            .getResponseBody();
++    assertThat(body).isNotNull();
++    return body.code();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+new file mode 100644
+index 0000000..e81d16c
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+@@ -0,0 +1,83 @@
++package dev.harshil.shortener.service;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++import static org.mockito.Mockito.verifyNoInteractions;
++import static org.mockito.Mockito.when;
++
++import dev.harshil.shortener.api.dto.StatsResponse;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.domain.LinkNotFoundException;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.ClickSummary;
++import dev.harshil.shortener.repository.LinkRepository;
++import java.time.Clock;
++import java.time.Duration;
++import java.time.Instant;
++import java.time.ZoneOffset;
++import java.util.Optional;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.springframework.test.util.ReflectionTestUtils;
++
++@ExtendWith(MockitoExtension.class)
++class AnalyticsServiceTest {
++
++  private static final Instant NOW = Instant.parse("2026-10-12T12:00:00Z");
++  private static final Instant SINCE_24H = NOW.minus(Duration.ofHours(24));
++  private static final Instant SINCE_7D = NOW.minus(Duration.ofDays(7));
++  private static final long LINK_ID = 42L;
++
++  @Mock private LinkRepository links;
++  @Mock private ClickEventRepository clickEvents;
++
++  private AnalyticsService service;
++
++  @BeforeEach
++  void createService() {
++    service = new AnalyticsService(links, clickEvents, Clock.fixed(NOW, ZoneOffset.UTC));
++  }
++
++  @Test
++  void stats_knownCode_queriesOneAggregateWithWindowsCutFromTheClockAndMapsEveryField() {
++    Instant lastClick = NOW.minus(Duration.ofMinutes(3));
++    when(links.findByCode("stats01")).thenReturn(Optional.of(linkWithId("stats01")));
++    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
++        .thenReturn(new ClickSummary(10, 2, 7, lastClick));
++
++    StatsResponse stats = service.stats("stats01");
++
++    assertThat(stats).isEqualTo(new StatsResponse("stats01", 10L, 2L, 7L, lastClick));
++  }
++
++  @Test
++  void stats_linkNeverClicked_returnsZerosAndNullLastClickedAt() {
++    when(links.findByCode("quiet01")).thenReturn(Optional.of(linkWithId("quiet01")));
++    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
++        .thenReturn(new ClickSummary(0, 0, 0, null));
++
++    StatsResponse stats = service.stats("quiet01");
++
++    assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null));
++  }
++
++  @Test
++  void stats_unknownCode_throwsLinkNotFoundWithoutQueryingClicks() {
++    when(links.findByCode("nothere")).thenReturn(Optional.empty());
++
++    assertThatThrownBy(() -> service.stats("nothere"))
++        .isInstanceOfSatisfying(
++            LinkNotFoundException.class, ex -> assertThat(ex.getCode()).isEqualTo("nothere"));
++
++    verifyNoInteractions(clickEvents);
++  }
++
++  private static Link linkWithId(String code) {
++    Link link = new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)));
++    ReflectionTestUtils.setField(link, "id", LINK_ID);
++    return link;
++  }
++}

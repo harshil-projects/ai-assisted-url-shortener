@@ -258,6 +258,197 @@ entries:
     reviewer: Harshil
     started_at: 2026-10-12T02:12:00Z
     finished_at: 2026-10-12T03:40:00Z
+  - task: T-002
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-002/v1.md
+    raw_output: harness/evidence/T-002/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/resources/db/migration/V1__create_links_and_click_events.sql, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/Link.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/repository/ClickSummary.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/repository/LinkRepository.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/LinkTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/LinkRepositoryTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. The V1 migration was written in the T-000 session from design 3.5; the
+      entities, repositories and the four test classes were drafted in the core worktree session from
+      prompt v1 and kept as drafted after reading every file: identity keys, time-zone columns and the
+      named constraints match the design, equals and hashCode use the code, toString omits the URL,
+      and MigrationTest pins the constraint and index names plus the three-column click_events shape.
+      deleteByCode carries @Transactional because a derived delete needs a writable transaction.
+      Review artifact harness/reviews/T-002.md.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "a derived deleteByCode works without @Transactional", finding: "refuted. Spring Data runs repository query methods read-only by default; the derived delete needs a writable transaction", fix: "@Transactional on the repository method; LinkService.delete is also transactional" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:10:00Z
+  - task: T-003
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-003/v1.md
+      - harness/prompts/T-002/v1.md
+    raw_output: harness/evidence/T-003/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/LogSanitizer.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ReservedWords.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/UrlValidationException.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/CodeGenerator.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/UrlValidator.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/LogSanitizerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/domain/ReservedWordsTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/CodeGeneratorTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/UrlValidatorTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Kept as drafted after reading every file and the 73-case validator
+      table. The validator is stricter than the prompt: decimal, hexadecimal and octal numeric hosts
+      such as 2130706433 are rejected because java.net.URI reports them as host names while browsers
+      resolve them to 127.0.0.1, which would bypass the block list. The engineer accepted the
+      deviation as a security improvement. h2-console was added to the reserved words. Review
+      artifact harness/reviews/T-003.md.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "the literal block list covers every way a browser reaches 127.0.0.1", finding: "refuted while writing the table: http://2130706433/ passed because URI treats the all-digit label as a host name, not an address", fix: "reject hosts whose last label is decimal, hexadecimal or octal unless the host is a canonical dotted quad or a bracketed IPv6 literal; four cases added" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:10:00Z
+  - task: T-004
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-004/v1.md
+      - harness/prompts/T-002/v1.md
+    raw_output: harness/evidence/T-004/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ApiExceptionHandler.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/ShortUrlBuilder.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/CreateLinkRequest.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/LinkResponse.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/ClockConfig.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/AliasTakenException.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/CodeGenerationExhaustedException.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/LinkNotFoundException.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/LinkAllocator.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/LinkService.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ApiExceptionHandlerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkFlowIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ShortUrlBuilderTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/LinkAllocatorTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/LinkServiceTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Kept as drafted after reading LinkService, LinkAllocator and the
+      exception handler in full: validation and the retry loop sit outside any transaction, each
+      insert attempt is one transaction in a separate bean, only a violation naming uk_links_code is
+      treated as a collision, and every error body is built through ProblemDetails so filters and
+      controllers produce one shape. Fixed detail strings replace parser and driver messages.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "DataIntegrityViolationException.getMessage always names the constraint", finding: "partly. H2 puts the constraint name in the most specific cause; the wrapper message sometimes omits it", fix: "check both the message and the most specific cause, case-insensitively" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:10:00Z
+  - task: T-005
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-005/v1.md
+      - harness/prompts/T-002/v1.md
+    raw_output: harness/evidence/T-005/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/ClickRecorderExecutorConfig.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/ClickRecordingIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/RedirectControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/RedirectIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/ClickRecorderExecutorConfigTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Kept as drafted: the controller builds the immutable ClickRecorded on
+      the request thread and reads nothing from the request afterwards; the recorder catches
+      RuntimeException (checked exceptions cannot occur and Errors should propagate), logs once with
+      the request id and counts the drop; the executor is fixed at 2/4/1000 with a counting rejection
+      handler, drains for ten seconds and is excluded from by-type autowiring. HEAD resolves and is
+      counted as a redirect outcome but publishes no click, as documented in the Javadoc.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "catch (Exception) in the recorder is acceptable", finding: "refuted by SpotBugs REC_CATCH_EXCEPTION; no checked exception is thrown there", fix: "catch RuntimeException; Errors propagate" }
+      - { hypothesis: "@MockitoBean ClickEventRepository can prove the redirect survives a failing insert", finding: "it replaces persistence for the whole context, so the other recording tests would lose real saves", fix: "@MockitoSpyBean with one stubbed save in the failure test" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:10:00Z
+  - task: T-006
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-006/v1.md
+      - harness/prompts/T-002/v1.md
+    raw_output: harness/evidence/T-006/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/StatsController.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/LinkManagementIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/StatsControllerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/StatsIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java, status: generated }
+    rationale: >
+      Engineer-asserted. Kept as drafted: one read-only aggregate query with the window
+      boundaries taken from the injected Clock, boxed counts in the response record, and the delete
+      path proven to remove events through the database cascade. Data-deletion assessment in the
+      review artifact harness/reviews/T-006.md.
+    rejected_notes: []
+    debug: []
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:10:00Z
+  - task: T-008
+    tool: Claude Code
+    model: claude-fable-5-1
+    prompts:
+      - harness/prompts/T-007/v1.md
+      - harness/prompts/T-008/v1.md
+    raw_output: harness/evidence/T-008/ai-raw.patch
+    files:
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/config/OpenApiConfig.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/OpenApiErrorCustomizer.java, status: generated }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/LinkController.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/StatsController.java, status: edited }
+      - { path: url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java, status: edited }
+      - { path: url-shortener/src/main/resources/application.properties, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/ActuatorIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiIT.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/api/OpenApiErrorCustomizerTest.java, status: generated }
+      - { path: url-shortener/src/test/java/dev/harshil/shortener/config/OpenApiConfigTest.java, status: generated }
+      - { path: docs/reference/openapi.yaml, status: edited }
+    rationale: >
+      Engineer-asserted. The OpenAPI configuration, the shared error catalogue customizer, the springdoc
+      properties and the four test classes were drafted in the edge worktree session and kept as
+      drafted; the relative server URL was an AI deviation accepted because the committed export must
+      not depend on the port it was served from. docs/reference/openapi.yaml is generated by OpenApiIT
+      with -Dopenapi.update=true and marked edited because the engineer regenerated it after
+      correcting the controllers: the first export declared 200 for operations that return 201, 204
+      and 302, because springdoc infers the status from the return type. The three controllers (drafted
+      in T-004 to T-006) were edited by adding @ResponseStatus, @Operation and @ApiResponse annotations
+      and by returning void from delete so the document names the real codes; the drift test now
+      guards them.
+    rejected_notes: []
+    debug:
+      - { hypothesis: "springdoc documents the status a controller actually returns", finding: "refuted. It documented 200 for create (201), delete (204), redirect and probe (302); the status lives in the ResponseEntity at runtime, which springdoc cannot see", fix: "@ResponseStatus plus @ApiResponse on each operation; delete returns void; export regenerated and compared by OpenApiIT" }
+      - { hypothesis: "the export is stable across machines", finding: "refuted in the worktree. Without a declared server springdoc writes the absolute request URL with the random test port", fix: "relative server URL in OpenApiConfig" }
+    reviewer: Harshil
+    started_at: 2026-10-12T02:12:00Z
+    finished_at: 2026-10-12T04:30:00Z
 gates:
   - task: T-000
     commit: "ef0259b2db05523eb5d948699a59fb8c5da3aa73"
@@ -366,6 +557,22 @@ gates:
       secrets: pass
       perf: "skipped: opt-in profile not run"
     log: harness/evidence/T-007/verify-1.log
+  - task: T-002
+    commit: "57ec293e08c56166f6c4ff9c5848c1f294809095"
+    tree: dirty
+    run_at: "2026-10-12T03:28:14Z"
+    overall: fail
+    results:
+      format: not-reached
+      style: fail
+      sast: not-reached
+      tests: not-reached
+      coverage: not-reached
+      traceability: not-reached
+      secrets: not-reached
+      perf: "skipped: opt-in profile not run"
+    failed_goal: "org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check on project url-shortener"
+    log: harness/evidence/T-002/verify-1.log
 signoffs:
   - task: T-000
     reasons: [dependency]
@@ -392,3 +599,27 @@ signoffs:
       Security chain, filters and their order reviewed against design sections 3.6 and 3.7; every
       acceptance criterion has a passing test; the CSRF exclusion carries its reason; Bucket4j
       coordinate verified on Maven Central.
+  - task: T-002
+    reasons: [schema]
+    review: harness/reviews/T-002.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T04:12:00Z
+    statement: >
+      Migration V1 and the entities reviewed against design section 3.5; constraint names, time zone
+      types and the three-column click_events shape confirmed by MigrationTest.
+  - task: T-003
+    reasons: [security]
+    review: harness/reviews/T-003.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T04:13:00Z
+    statement: >
+      URL validator reviewed against design sections 3.6 and 3.7; every block-list rule has rejected
+      and accepted cases; the numeric-host deviation accepted as a bypass fix.
+  - task: T-006
+    reasons: [data-deletion]
+    review: harness/reviews/T-006.md
+    signed_by: Harshil
+    signed_at: 2026-10-12T04:14:00Z
+    statement: >
+      Hard delete scoped to one link and its events behind the API key; irreversibility and alias
+      reclaim recorded as accepted limitations.

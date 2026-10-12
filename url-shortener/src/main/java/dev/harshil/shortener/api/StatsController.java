@@ -2,6 +2,8 @@ package dev.harshil.shortener.api;
 
 import dev.harshil.shortener.api.dto.StatsResponse;
 import dev.harshil.shortener.service.AnalyticsService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,6 +37,8 @@ public class StatsController {
    * @param code the short code
    * @return 200 with the statistics
    */
+  @Operation(summary = "Read click statistics for a link")
+  @ApiResponse(responseCode = "200", description = "Totals and windows")
   @GetMapping(STATS_PATH)
   public StatsResponse stats(@PathVariable String code) {
     return analytics.stats(code);
