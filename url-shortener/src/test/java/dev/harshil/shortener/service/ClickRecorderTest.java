@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.harshil.shortener.domain.ClickAttribution;
 import dev.harshil.shortener.domain.ClickEvent;
 import dev.harshil.shortener.domain.ClickRecorded;
 import dev.harshil.shortener.repository.ClickEventRepository;
@@ -43,6 +44,39 @@ class ClickRecorderTest {
     verify(clickEvents).save(saved.capture());
     assertThat(saved.getValue().getLinkId()).isEqualTo(7L);
     assertThat(saved.getValue().getOccurredAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void on_eventWithAttribution_copiesEveryAttributionValueOntoTheClickEvent() {
+    ClickAttribution attribution =
+        new ClickAttribution("news.example.com", "newsletter", "email", "oct");
+
+    recorder.on(new ClickRecorded(7L, NOW, "req-7", attribution));
+
+    ArgumentCaptor<ClickEvent> saved = ArgumentCaptor.forClass(ClickEvent.class);
+    verify(clickEvents).save(saved.capture());
+    assertThat(saved.getValue())
+        .extracting(
+            ClickEvent::getReferrerHost,
+            ClickEvent::getUtmSource,
+            ClickEvent::getUtmMedium,
+            ClickEvent::getUtmCampaign)
+        .containsExactly("news.example.com", "newsletter", "email", "oct");
+  }
+
+  @Test
+  void on_eventWithoutAttribution_savesNullAttributionColumns() {
+    recorder.on(EVENT);
+
+    ArgumentCaptor<ClickEvent> saved = ArgumentCaptor.forClass(ClickEvent.class);
+    verify(clickEvents).save(saved.capture());
+    assertThat(saved.getValue())
+        .extracting(
+            ClickEvent::getReferrerHost,
+            ClickEvent::getUtmSource,
+            ClickEvent::getUtmMedium,
+            ClickEvent::getUtmCampaign)
+        .containsOnlyNulls();
   }
 
   @Test

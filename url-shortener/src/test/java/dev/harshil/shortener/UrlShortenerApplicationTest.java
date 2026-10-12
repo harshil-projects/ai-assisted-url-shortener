@@ -9,15 +9,21 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Proves the application context starts and the Flyway baseline schema is in place. */
+/**
+ * Proves the application context starts and every committed Flyway migration is in place: V1
+ * creates the two tables and V3 (click attribution, R-03) is the latest version applied.
+ */
 @SpringBootTest
 @TestProfile
 class UrlShortenerApplicationTest {
 
+  /** The newest migration under db/migration; bump it when a migration is added. */
+  private static final int LATEST_MIGRATION_VERSION = 3;
+
   @Autowired private DataSource dataSource;
 
   @Test
-  void contextStarts_appliesMigrationV1_createsLinksAndClickEventsTables() {
+  void contextStarts_appliesEveryCommittedMigration_createsLinksAndClickEventsTables() {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
     Integer tables =
@@ -30,6 +36,6 @@ class UrlShortenerApplicationTest {
             "select max(version) from flyway_schema_history where success = true", Integer.class);
 
     assertThat(tables).isEqualTo(2);
-    assertThat(version).isEqualTo(1);
+    assertThat(version).isEqualTo(LATEST_MIGRATION_VERSION);
   }
 }

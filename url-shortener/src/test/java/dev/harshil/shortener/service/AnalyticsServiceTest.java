@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import dev.harshil.shortener.api.dto.CampaignStats;
+import dev.harshil.shortener.api.dto.ReferrerStats;
 import dev.harshil.shortener.api.dto.StatsResponse;
 import dev.harshil.shortener.domain.Link;
 import dev.harshil.shortener.domain.LinkNotFoundException;
@@ -15,6 +17,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,7 +53,7 @@ class AnalyticsServiceTest {
 
     StatsResponse stats = service.stats("stats01");
 
-    assertThat(stats).isEqualTo(new StatsResponse("stats01", 10L, 2L, 7L, lastClick));
+    assertThat(stats).isEqualTo(new StatsResponse("stats01", 10L, 2L, 7L, lastClick, null, false));
   }
 
   @Test
@@ -61,7 +64,56 @@ class AnalyticsServiceTest {
 
     StatsResponse stats = service.stats("quiet01");
 
-    assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null));
+    assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null, null, false));
+  }
+
+  @Test
+  void stats_expiredLink_reportsExpiredTrueWithTheExpiryAndKeepsCountingItsClicks() {
+    Instant expiredAt = NOW.minus(Duration.ofMinutes(1));
+    Link expired = linkWithId("expired");
+    ReflectionTestUtils.setField(expired, "expiresAt", expiredAt);
+    when(links.findByCode("expired")).thenReturn(Optional.of(expired));
+    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
+        .thenReturn(new ClickSummary(5, 1, 3, NOW.minus(Duration.ofHours(2))));
+
+    StatsResponse stats = service.stats("expired");
+
+    assertThat(stats)
+        .isEqualTo(
+            new StatsResponse(
+                "expired", 5L, 1L, 3L, NOW.minus(Duration.ofHours(2)), expiredAt, true));
+  }
+
+  @Test
+  void stats_linkExpiringLater_reportsExpiredFalseWithTheExpiry() {
+    Instant expiresAt = NOW.plus(Duration.ofMinutes(1));
+    Link live = linkWithId("live001");
+    ReflectionTestUtils.setField(live, "expiresAt", expiresAt);
+    when(links.findByCode("live001")).thenReturn(Optional.of(live));
+    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
+        .thenReturn(new ClickSummary(0, 0, 0, null));
+
+    StatsResponse stats = service.stats("live001");
+
+    assertThat(stats.expired()).isFalse();
+    assertThat(stats.expiresAt()).isEqualTo(expiresAt);
+  }
+
+  @Test
+  void stats_knownCode_fillsTheTopTenReferrersAndCampaignsFromTheRepository() {
+    List<ReferrerStats> referrers = List.of(new ReferrerStats("news.example.com", 2));
+    List<CampaignStats> campaigns = List.of(new CampaignStats("newsletter", "email", "oct", 1));
+    when(links.findByCode("attr01")).thenReturn(Optional.of(linkWithId("attr01")));
+    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
+        .thenReturn(new ClickSummary(3, 3, 3, NOW));
+    when(clickEvents.topReferrers(LINK_ID, AnalyticsService.TOP_N)).thenReturn(referrers);
+    when(clickEvents.topCampaigns(LINK_ID, AnalyticsService.TOP_N)).thenReturn(campaigns);
+
+    StatsResponse stats = service.stats("attr01");
+
+    assertThat(stats.referrers()).containsExactlyElementsOf(referrers);
+    assertThat(stats.campaigns()).containsExactlyElementsOf(campaigns);
+    assertThat(AnalyticsService.TOP_N).isEqualTo(10);
   }
 
   @Test
@@ -76,7 +128,7 @@ class AnalyticsServiceTest {
   }
 
   private static Link linkWithId(String code) {
-    Link link = new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)));
+    Link link = new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30)), null);
     ReflectionTestUtils.setField(link, "id", LINK_ID);
     return link;
   }

@@ -1,0 +1,1390 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c3f7203..c539c93 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
+ 
+ ### Added
+ 
++- Click attribution (R-03, T-202): each click records the lower-cased host of the `Referer` header and the `utm_source`, `utm_medium` and `utm_campaign` parameters of the short link request, cleaned of control characters and bounded to the column widths; migration V3 adds the four nullable columns to `click_events` one `ALTER TABLE ... ADD COLUMN` at a time. No IP address, user agent, full referrer URL, geography or device value is stored (ADR 0006 unchanged).
++- `GET /api/v1/links/{code}/stats` returns `referrers` (host, clicks) and `campaigns` (source, medium, campaign, clicks), each at most ten rows ordered by clicks descending then name over all clicks of the link (T-202).
++- Edge-case table for `ClickAttribution.from` (case folding, trailing dots, IPv6 and userinfo referers, relative and opaque references, over-long hosts, duplicate, empty, whitespace, control-character and non-ASCII `utm_*` values), `AttributionIT` over HTTP, and the attribution section of `docs/reference/api.md` (T-203).
++
+ ### Changed
+ 
+ ### Fixed
+diff --git a/docs/reference/api.md b/docs/reference/api.md
+index 7573d1e..1ca51e6 100644
+--- a/docs/reference/api.md
++++ b/docs/reference/api.md
+@@ -13,7 +13,7 @@
+ | Method and path | Auth | Request | Success | Errors |
+ |---|---|---|---|---|
+ | `POST /api/v1/links` | API key | `application/json` only; `{ "url": string, "customAlias"?: string, "expiresAt"?: RFC 3339 with offset }` | 201, `Location: /api/v1/links/{code}`, body `LinkResponse` | 400 validation, 401, 409 alias taken, 413 body too large, 415 wrong content type, 429, 503 |
+-| `GET /{code:[A-Za-z0-9_-]{4,32}}` | none | path code | 302, `Location`, `Cache-Control: no-store` | 404, 410 expired, 503 |
++| `GET /{code:[A-Za-z0-9_-]{4,32}}` | none | path code; the `Referer` header's host and the `utm_source`, `utm_medium`, `utm_campaign` query parameters are recorded for attribution, never forwarded | 302, `Location` is the stored URL exactly, `Cache-Control: no-store` | 404, 410 expired, 503 |
+ | `HEAD /{code}` | none | path code | Same status as GET; not counted as a click | 404, 410 |
+ | `GET /api/v1/links/{code}` | API key | path code | 200 `LinkResponse` | 401, 404 |
+ | `GET /api/v1/links/{code}/stats` | API key | path code | 200 `StatsResponse` | 401, 404 |
+@@ -35,11 +35,28 @@ Request rules for create:
+ | Record | Fields |
+ |---|---|
+ | `LinkResponse` | `code`, `shortUrl`, `url`, `createdAt`, `expiresAt` (nullable), `expired` (boolean) |
+-| `StatsResponse` | `code`, `totalClicks`, `clicksLast24h`, `clicksLast7d`, `lastClickedAt`, `expiresAt`, `expired`; any attribution fields only if the ambiguous scenario decides so |
++| `StatsResponse` | `code`, `totalClicks`, `clicksLast24h`, `clicksLast7d`, `lastClickedAt`, `expiresAt`, `expired`, `referrers[]` of `ReferrerStats`, `campaigns[]` of `CampaignStats`; both arrays are always present, at most ten rows each, empty when nothing was recorded |
++| `ReferrerStats` | `host` (lower-cased referring host), `clicks` |
++| `CampaignStats` | `source`, `medium`, `campaign` (each nullable when the link was shared with only some of the `utm_*` parameters), `clicks` |
+ | Problem Details | `type`, `title`, `status`, `detail`, `instance`, `requestId`, `timestamp`; `errors[]` with field and message on 400 |
+ 
+ `shortUrl` is built from `app.base-url` when set, otherwise from the current request's scheme, host, and port, so a reviewer on another port sees correct values.
+ 
++## Click attribution
++
++Decided in `harness/requirements/R-03.md` ("where clicks come from" means the referring site first and the campaign second); implemented by T-202, proven by `ClickAttributionTest`, `ClickEventRepositoryTest`, `MigrationTest` and `AttributionIT`.
++
++| Aspect | Behaviour |
++|---|---|
++| Inputs | Only the `Referer` request header and the `utm_source`, `utm_medium`, `utm_campaign` query parameters of the redirect request. Every other header and parameter is ignored |
++| Referrer host | The header is parsed with `java.net.URI`; only the lower-cased host of an absolute URL is kept, truncated to 253 characters. Userinfo, port, path, query and fragment are discarded. An absent header, a relative reference, an opaque URI (`data:`, `mailto:`) or anything that is not a URL records `null`; the click still counts |
++| Campaign values | The first value of each key; ISO control characters removed, surrounding whitespace trimmed, truncated to 64 characters; empty after cleaning records `null`. Keys are case-sensitive |
++| Breakdowns | `referrers`: rows grouped by host, excluding clicks with no host. `campaigns`: rows grouped by the (`source`, `medium`, `campaign`) triple, excluding clicks where all three are null. Each at most ten rows, ordered by `clicks` descending then by name, counted over all clicks of the link; the 24-hour and 7-day totals are unchanged and no window parameter exists yet |
++| Redirect | Unchanged: 302 to the stored URL exactly as validated at create time, `Cache-Control: no-store`; query parameters on the short link are recorded, never appended to `Location`. `HEAD` records nothing |
++| Storage | Migration V3 adds `referrer_host VARCHAR(253)`, `utm_source`, `utm_medium`, `utm_campaign VARCHAR(64)` to `click_events`, all nullable, one `ALTER TABLE ... ADD COLUMN` per statement |
++
++Privacy position (ADR 0006, unchanged): no IP address, no user agent, no full referrer URL, no geography and no device value is read, derived, logged or stored. `click_events` has exactly seven columns, `id`, `link_id`, `occurred_at` and the four above, and `MigrationTest` fails if another appears. The attribution values are marketing-authored labels and the public host of the previous page, bounded and cleaned on the request thread before the click event is published.
++
+ ## Headers
+ 
+ | Header | On | Value |
+diff --git a/docs/reference/openapi.yaml b/docs/reference/openapi.yaml
+index 068bc9e..970e3a2 100644
+--- a/docs/reference/openapi.yaml
++++ b/docs/reference/openapi.yaml
+@@ -405,6 +405,18 @@ paths:
+       - redirect-controller
+ components:
+   schemas:
++    CampaignStats:
++      type: object
++      properties:
++        campaign:
++          type: string
++        clicks:
++          type: integer
++          format: int64
++        medium:
++          type: string
++        source:
++          type: string
+     CreateLinkRequest:
+       type: object
+       properties:
+@@ -474,9 +486,21 @@ components:
+       required:
+       - status
+       - type
++    ReferrerStats:
++      type: object
++      properties:
++        clicks:
++          type: integer
++          format: int64
++        host:
++          type: string
+     StatsResponse:
+       type: object
+       properties:
++        campaigns:
++          type: array
++          items:
++            $ref: "#/components/schemas/CampaignStats"
+         clicksLast24h:
+           type: integer
+           format: int64
+@@ -488,6 +512,10 @@ components:
+         lastClickedAt:
+           type: string
+           format: date-time
++        referrers:
++          type: array
++          items:
++            $ref: "#/components/schemas/ReferrerStats"
+         totalClicks:
+           type: integer
+           format: int64
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+index f1b3da2..fbb10a8 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/RedirectController.java
+@@ -1,5 +1,6 @@
+ package dev.harshil.shortener.api;
+ 
++import dev.harshil.shortener.domain.ClickAttribution;
+ import dev.harshil.shortener.domain.ClickRecorded;
+ import dev.harshil.shortener.domain.Link;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+@@ -9,11 +10,13 @@ import io.micrometer.core.instrument.MeterRegistry;
+ import io.swagger.v3.oas.annotations.Operation;
+ import io.swagger.v3.oas.annotations.media.Content;
+ import io.swagger.v3.oas.annotations.responses.ApiResponse;
++import jakarta.servlet.http.HttpServletRequest;
+ import java.net.URI;
+ import java.time.Clock;
+ import org.slf4j.MDC;
+ import org.springframework.context.ApplicationEventPublisher;
+ import org.springframework.http.CacheControl;
++import org.springframework.http.HttpHeaders;
+ import org.springframework.http.HttpStatus;
+ import org.springframework.http.ResponseEntity;
+ import org.springframework.web.bind.annotation.GetMapping;
+@@ -33,6 +36,11 @@ import org.springframework.web.bind.annotation.RestController;
+  * request is not read again afterwards; the asynchronous recorder owns the rest. {@code HEAD} is
+  * mapped separately so it resolves and reports the same status without counting a click.
+  *
++ * <p>Attribution (R-03): the host of the {@code Referer} header and the {@code utm_*} query
++ * parameters of the short link request are reduced to a {@link ClickAttribution} here, on the
++ * request thread, and travel inside the event. Query parameters are recorded, never forwarded: the
++ * {@code Location} is the stored URL exactly.
++ *
+  * <p>The path pattern admits only strings that could be codes, so browser noise such as {@code
+  * /favicon.ico} is answered by the framework's 404 without a database call.
+  */
+@@ -71,9 +79,10 @@ public class RedirectController {
+   }
+ 
+   /**
+-   * Redirects to the stored URL and records the click.
++   * Redirects to the stored URL and records the click with its attribution.
+    *
+    * @param code the short code
++   * @param request the current request; only its {@code Referer} header and parameter map are read
+    * @return 302 with {@code Location} and {@code Cache-Control: no-store}
+    */
+   @Operation(
+@@ -85,10 +94,13 @@ public class RedirectController {
+       content = @Content)
+   @ResponseStatus(HttpStatus.FOUND)
+   @GetMapping(CODE_PATH)
+-  public ResponseEntity<Void> redirect(@PathVariable String code) {
++  public ResponseEntity<Void> redirect(@PathVariable String code, HttpServletRequest request) {
+     Link link = resolveCounted(code);
++    ClickAttribution attribution =
++        ClickAttribution.from(request.getHeader(HttpHeaders.REFERER), request.getParameterMap());
+     events.publishEvent(
+-        new ClickRecorded(link.getId(), clock.instant(), MDC.get(ProblemDetails.REQUEST_ID)));
++        new ClickRecorded(
++            link.getId(), clock.instant(), MDC.get(ProblemDetails.REQUEST_ID), attribution));
+     return redirectTo(link);
+   }
+ 
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CampaignStats.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CampaignStats.java
+new file mode 100644
+index 0000000..00e929e
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/CampaignStats.java
+@@ -0,0 +1,14 @@
++package dev.harshil.shortener.api.dto;
++
++/**
++ * One row of the campaign breakdown in {@link StatsResponse}: a distinct {@code utm_source}, {@code
++ * utm_medium}, {@code utm_campaign} triple as marketing put it on the short link, and how many
++ * clicks carried it, counted over all time (R-03 decision). Any of the three may be {@code null}
++ * when the link was shared with only some of the parameters; clicks that carried none have no row.
++ *
++ * @param source {@code utm_source}, or {@code null}
++ * @param medium {@code utm_medium}, or {@code null}
++ * @param campaign {@code utm_campaign}, or {@code null}
++ * @param clicks number of clicks that carried exactly this triple
++ */
++public record CampaignStats(String source, String medium, String campaign, long clicks) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/ReferrerStats.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/ReferrerStats.java
+new file mode 100644
+index 0000000..dcb00c3
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/ReferrerStats.java
+@@ -0,0 +1,11 @@
++package dev.harshil.shortener.api.dto;
++
++/**
++ * One row of the referrer breakdown in {@link StatsResponse}: a referring host and how many clicks
++ * on the link arrived from it, counted over all time (R-03 decision). Only the host is ever
++ * recorded, never the full referrer URL; clicks without a usable referer have no row.
++ *
++ * @param host lower-cased host of the referring page
++ * @param clicks number of clicks that carried it
++ */
++public record ReferrerStats(String host, long clicks) {}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+index be9546f..08da0ac 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/api/dto/StatsResponse.java
+@@ -1,15 +1,47 @@
+ package dev.harshil.shortener.api.dto;
+ 
+ import java.time.Instant;
++import java.util.List;
+ 
+ /**
+- * Click statistics for one link (design 3.3), computed by a single aggregate query.
++ * Click statistics for one link (design 3.3): the totals from a single aggregate query plus the two
++ * attribution breakdowns decided in R-03, each at most ten rows ordered by clicks descending then
++ * name, counted over all clicks of the link.
+  *
+  * @param code the short code
+  * @param totalClicks every recorded click
+  * @param clicksLast24h clicks in the 24 hours before the request, inclusive of the boundary
+  * @param clicksLast7d clicks in the 7 days before the request, inclusive of the boundary
+  * @param lastClickedAt the most recent click, or {@code null} when the link was never followed
++ * @param referrers top referring hosts; empty, never {@code null}, when none was recorded
++ * @param campaigns top campaign triples; empty, never {@code null}, when none was recorded
+  */
+ public record StatsResponse(
+-    String code, Long totalClicks, Long clicksLast24h, Long clicksLast7d, Instant lastClickedAt) {}
++    String code,
++    Long totalClicks,
++    Long clicksLast24h,
++    Long clicksLast7d,
++    Instant lastClickedAt,
++    List<ReferrerStats> referrers,
++    List<CampaignStats> campaigns) {
++
++  /** Renders absent breakdowns as empty arrays and keeps the lists immutable. */
++  public StatsResponse {
++    referrers = referrers == null ? List.of() : List.copyOf(referrers);
++    campaigns = campaigns == null ? List.of() : List.copyOf(campaigns);
++  }
++
++  /**
++   * Creates statistics without attribution breakdowns; both lists are empty.
++   *
++   * @param code the short code
++   * @param totalClicks every recorded click
++   * @param clicksLast24h clicks in the last 24 hours
++   * @param clicksLast7d clicks in the last 7 days
++   * @param lastClickedAt the most recent click, or {@code null}
++   */
++  public StatsResponse(
++      String code, Long totalClicks, Long clicksLast24h, Long clicksLast7d, Instant lastClickedAt) {
++    this(code, totalClicks, clicksLast24h, clicksLast7d, lastClickedAt, List.of(), List.of());
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickAttribution.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickAttribution.java
+new file mode 100644
+index 0000000..3834e22
+--- /dev/null
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickAttribution.java
+@@ -0,0 +1,108 @@
++package dev.harshil.shortener.domain;
++
++import java.net.URI;
++import java.net.URISyntaxException;
++import java.util.Locale;
++import java.util.Map;
++
++/**
++ * Where a click came from, reduced to what marketing asked for and to nothing that identifies the
++ * visitor (R-03 decision, ADR 0006): the host of the {@code Referer} header and the three {@code
++ * utm_*} parameters carried on the short link request. Nothing else from the request is read; no
++ * address, no user agent, no full referrer URL, no location, no device.
++ *
++ * <p>{@link #from(String, Map)} runs on the request thread and never throws: anything absent,
++ * malformed or empty becomes {@code null}, so a hostile header can never cost a redirect or a
++ * click. Values are bounded to their column widths so the insert cannot fail on length either.
++ *
++ * @param referrerHost lower-cased host of the referring page, at most {@value #MAX_HOST_LENGTH}
++ *     characters, or {@code null} when the header was absent, relative or not a URL
++ * @param utmSource {@code utm_source} with control characters removed, trimmed, at most {@value
++ *     #MAX_UTM_LENGTH} characters, or {@code null} when absent or empty after cleaning
++ * @param utmMedium {@code utm_medium}, same rules as {@code utmSource}
++ * @param utmCampaign {@code utm_campaign}, same rules as {@code utmSource}
++ */
++public record ClickAttribution(
++    String referrerHost, String utmSource, String utmMedium, String utmCampaign) {
++
++  /** Attribution of a click that carried neither a usable referer nor campaign parameters. */
++  public static final ClickAttribution NONE = new ClickAttribution(null, null, null, null);
++
++  /** Longest host kept: the DNS limit for a fully qualified name, and the column width. */
++  public static final int MAX_HOST_LENGTH = 253;
++
++  /** Longest campaign value kept: the column width. */
++  public static final int MAX_UTM_LENGTH = 64;
++
++  static final String UTM_SOURCE = "utm_source";
++  static final String UTM_MEDIUM = "utm_medium";
++  static final String UTM_CAMPAIGN = "utm_campaign";
++
++  /**
++   * Derives the attribution of one redirect request. Never throws.
++   *
++   * @param refererHeader the raw {@code Referer} header, or {@code null} when absent
++   * @param query the request's parameter map as the servlet container parsed it, or {@code null}
++   * @return the attribution; {@link #NONE} when nothing usable was present
++   */
++  public static ClickAttribution from(String refererHeader, Map<String, String[]> query) {
++    return new ClickAttribution(
++        referrerHost(refererHeader),
++        utm(query, UTM_SOURCE),
++        utm(query, UTM_MEDIUM),
++        utm(query, UTM_CAMPAIGN));
++  }
++
++  /**
++   * Keeps only the lower-cased host of an absolute referer URL. Userinfo, port, path, query and
++   * fragment are discarded; a relative reference, an opaque URI such as {@code data:} or {@code
++   * mailto:}, or anything {@link URI} rejects yields {@code null}.
++   */
++  static String referrerHost(String referer) {
++    if (referer == null || referer.isEmpty()) {
++      return null;
++    }
++    try {
++      URI uri = new URI(referer);
++      if (!uri.isAbsolute() || uri.getHost() == null) {
++        return null;
++      }
++      return truncate(uri.getHost().toLowerCase(Locale.ROOT), MAX_HOST_LENGTH);
++    } catch (URISyntaxException e) {
++      return null;
++    }
++  }
++
++  /** First value of the key with ISO control characters removed, trimmed and bounded. */
++  static String utm(Map<String, String[]> query, String key) {
++    if (query == null) {
++      return null;
++    }
++    String[] values = query.get(key);
++    if (values == null || values.length == 0 || values[0] == null) {
++      return null;
++    }
++    String cleaned = truncate(stripControls(values[0]).strip(), MAX_UTM_LENGTH);
++    return cleaned.isEmpty() ? null : cleaned;
++  }
++
++  private static String stripControls(String value) {
++    StringBuilder kept = new StringBuilder(value.length());
++    for (int i = 0; i < value.length(); i++) {
++      char current = value.charAt(i);
++      if (!Character.isISOControl(current)) {
++        kept.append(current);
++      }
++    }
++    return kept.toString();
++  }
++
++  /** Cuts to {@code max} characters without splitting a surrogate pair at the cut. */
++  private static String truncate(String value, int max) {
++    if (value.length() <= max) {
++      return value;
++    }
++    int end = Character.isHighSurrogate(value.charAt(max - 1)) ? max - 1 : max;
++    return value.substring(0, end);
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java
+index f8f16a5..6ae92c3 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickEvent.java
+@@ -13,8 +13,10 @@ import java.time.Instant;
+  *
+  * <p>{@code linkId} is a plain column rather than a relationship so recording a click is a single
+  * {@code INSERT} with no preceding {@code SELECT} (design 3.5). The row carries nothing about the
+- * visitor: no address, no user agent (ADR 0006). Equality is left as identity because two clicks on
+- * the same link at the same instant are two distinct events.
++ * visitor: no address, no user agent (ADR 0006). Since V3 (R-03) it carries where the click came
++ * from in the bounded, nullable form of {@link ClickAttribution}: the referring host and the three
++ * campaign labels marketing put on the link, never the full referrer URL. Equality is left as
++ * identity because two clicks on the same link at the same instant are two distinct events.
+  */
+ @Entity
+ @Table(name = "click_events")
+@@ -30,18 +32,45 @@ public class ClickEvent {
+   @Column(name = "occurred_at", nullable = false)
+   private Instant occurredAt;
+ 
++  @Column(name = "referrer_host", length = ClickAttribution.MAX_HOST_LENGTH)
++  private String referrerHost;
++
++  @Column(name = "utm_source", length = ClickAttribution.MAX_UTM_LENGTH)
++  private String utmSource;
++
++  @Column(name = "utm_medium", length = ClickAttribution.MAX_UTM_LENGTH)
++  private String utmMedium;
++
++  @Column(name = "utm_campaign", length = ClickAttribution.MAX_UTM_LENGTH)
++  private String utmCampaign;
++
+   /** JPA only; Hibernate populates the fields reflectively. */
+   protected ClickEvent() {}
+ 
+   /**
+-   * Creates an event ready to be persisted.
++   * Creates an event without attribution, ready to be persisted.
+    *
+    * @param linkId identifier of the link that was followed
+    * @param occurredAt the instant the redirect was served, from the application clock
+    */
+   public ClickEvent(Long linkId, Instant occurredAt) {
++    this(linkId, occurredAt, ClickAttribution.NONE);
++  }
++
++  /**
++   * Creates an event ready to be persisted.
++   *
++   * @param linkId identifier of the link that was followed
++   * @param occurredAt the instant the redirect was served, from the application clock
++   * @param attribution where the click came from, already cleaned and bounded
++   */
++  public ClickEvent(Long linkId, Instant occurredAt, ClickAttribution attribution) {
+     this.linkId = linkId;
+     this.occurredAt = occurredAt;
++    this.referrerHost = attribution.referrerHost();
++    this.utmSource = attribution.utmSource();
++    this.utmMedium = attribution.utmMedium();
++    this.utmCampaign = attribution.utmCampaign();
+   }
+ 
+   public Long getId() {
+@@ -56,6 +85,22 @@ public class ClickEvent {
+     return occurredAt;
+   }
+ 
++  public String getReferrerHost() {
++    return referrerHost;
++  }
++
++  public String getUtmSource() {
++    return utmSource;
++  }
++
++  public String getUtmMedium() {
++    return utmMedium;
++  }
++
++  public String getUtmCampaign() {
++    return utmCampaign;
++  }
++
+   @Override
+   public String toString() {
+     return "ClickEvent{id=" + id + ", linkId=" + linkId + ", occurredAt=" + occurredAt + "}";
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java
+index a6473e1..9dc4398 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/domain/ClickRecorded.java
+@@ -6,10 +6,31 @@ import java.time.Instant;
+  * Immutable fact that a redirect was served, built on the request thread and handed to the click
+  * recorder's executor (design 3.6, ADR 0005). It carries everything the recorder needs so nothing
+  * from the servlet request is ever read off the request thread, and the request id so the
+- * asynchronous log line can be correlated with the redirect that caused it.
++ * asynchronous log line can be correlated with the redirect that caused it. Since R-03 it also
++ * carries the click's {@link ClickAttribution}, computed by the controller before publishing.
+  *
+  * @param linkId identifier of the link that was followed
+  * @param occurredAt the instant the redirect was served, from the application clock
+  * @param requestId the correlation id of the redirect request, or {@code null} when none was set
++ * @param attribution where the click came from; {@link ClickAttribution#NONE} when nothing usable
++ *     was on the request, never {@code null}
+  */
+-public record ClickRecorded(Long linkId, Instant occurredAt, String requestId) {}
++public record ClickRecorded(
++    Long linkId, Instant occurredAt, String requestId, ClickAttribution attribution) {
++
++  /** Normalises a missing attribution to {@link ClickAttribution#NONE}. */
++  public ClickRecorded {
++    attribution = attribution == null ? ClickAttribution.NONE : attribution;
++  }
++
++  /**
++   * Creates an event without attribution.
++   *
++   * @param linkId identifier of the link that was followed
++   * @param occurredAt the instant the redirect was served
++   * @param requestId the correlation id, or {@code null}
++   */
++  public ClickRecorded(Long linkId, Instant occurredAt, String requestId) {
++    this(linkId, occurredAt, requestId, ClickAttribution.NONE);
++  }
++}
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java
+index 86d2f8c..f007b52 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/repository/ClickEventRepository.java
+@@ -1,13 +1,19 @@
+ package dev.harshil.shortener.repository;
+ 
++import dev.harshil.shortener.api.dto.CampaignStats;
++import dev.harshil.shortener.api.dto.ReferrerStats;
+ import dev.harshil.shortener.domain.ClickEvent;
+ import java.time.Instant;
++import java.util.List;
++import org.springframework.data.domain.PageRequest;
++import org.springframework.data.domain.Pageable;
+ import org.springframework.data.jpa.repository.JpaRepository;
+ import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.repository.query.Param;
+ 
+ /**
+- * Append-only persistence for {@link ClickEvent} plus the one aggregate the stats endpoint needs.
++ * Append-only persistence for {@link ClickEvent} plus the aggregates the stats endpoint needs: the
++ * one-statement summary and, since R-03, the two attribution breakdowns.
+  */
+ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
+ 
+@@ -36,4 +42,65 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
+       @Param("linkId") Long linkId,
+       @Param("since24h") Instant since24h,
+       @Param("since7d") Instant since7d);
++
++  /**
++   * Top referring hosts of a link over all time, most clicks first and the host name as the
++   * tie-break; clicks that recorded no host are excluded (R-03, FR-15d).
++   *
++   * @param linkId the link to break down
++   * @param limit the most rows to return
++   * @return at most {@code limit} rows; empty when nothing was recorded
++   */
++  default List<ReferrerStats> topReferrers(long linkId, int limit) {
++    return topReferrers(linkId, PageRequest.of(0, limit));
++  }
++
++  /**
++   * Top campaign triples of a link over all time, most clicks first and the source, medium and
++   * campaign names as tie-breaks; clicks that recorded none of the three are excluded (R-03,
++   * FR-15d).
++   *
++   * @param linkId the link to break down
++   * @param limit the most rows to return
++   * @return at most {@code limit} rows; empty when nothing was recorded
++   */
++  default List<CampaignStats> topCampaigns(long linkId, int limit) {
++    return topCampaigns(linkId, PageRequest.of(0, limit));
++  }
++
++  /**
++   * Grouped query behind {@link #topReferrers(long, int)}; the page bounds the row count.
++   *
++   * @param linkId the link to break down
++   * @param page the first page, whose size is the row limit
++   * @return the rows of that page
++   */
++  @Query(
++      """
++      select new dev.harshil.shortener.api.dto.ReferrerStats(e.referrerHost, count(e))
++      from ClickEvent e
++      where e.linkId = :linkId and e.referrerHost is not null
++      group by e.referrerHost
++      order by count(e) desc, e.referrerHost asc
++      """)
++  List<ReferrerStats> topReferrers(@Param("linkId") long linkId, Pageable page);
++
++  /**
++   * Grouped query behind {@link #topCampaigns(long, int)}; the page bounds the row count.
++   *
++   * @param linkId the link to break down
++   * @param page the first page, whose size is the row limit
++   * @return the rows of that page
++   */
++  @Query(
++      """
++      select new dev.harshil.shortener.api.dto.CampaignStats(
++          e.utmSource, e.utmMedium, e.utmCampaign, count(e))
++      from ClickEvent e
++      where e.linkId = :linkId
++        and (e.utmSource is not null or e.utmMedium is not null or e.utmCampaign is not null)
++      group by e.utmSource, e.utmMedium, e.utmCampaign
++      order by count(e) desc, e.utmSource asc, e.utmMedium asc, e.utmCampaign asc
++      """)
++  List<CampaignStats> topCampaigns(@Param("linkId") long linkId, Pageable page);
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+index 18cdc47..6ee7a2a 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/AnalyticsService.java
+@@ -13,10 +13,10 @@ import org.springframework.stereotype.Service;
+ import org.springframework.transaction.annotation.Transactional;
+ 
+ /**
+- * Answers the stats endpoint with two statements: the link lookup and one aggregate over the {@code
+- * (link_id, occurred_at)} index (design 3.6). Both run in a single read-only transaction so they
+- * see one consistent snapshot, and the time windows are cut from the injected clock, which keeps
+- * the arithmetic in UTC and lets tests pin "now".
++ * Answers the stats endpoint with the link lookup, one aggregate over the {@code (link_id,
++ * occurred_at)} index (design 3.6) and, since R-03, the two grouped attribution breakdowns. All run
++ * in a single read-only transaction so they see one consistent snapshot, and the time windows are
++ * cut from the injected clock, which keeps the arithmetic in UTC and lets tests pin "now".
+  */
+ @Service
+ public class AnalyticsService {
+@@ -24,6 +24,9 @@ public class AnalyticsService {
+   static final Duration LAST_24H = Duration.ofHours(24);
+   static final Duration LAST_7D = Duration.ofDays(7);
+ 
++  /** Rows per attribution breakdown (R-03 decision: top ten). */
++  static final int TOP_N = 10;
++
+   private final LinkRepository links;
+   private final ClickEventRepository clickEvents;
+   private final Clock clock;
+@@ -45,7 +48,7 @@ public class AnalyticsService {
+    * Computes the statistics for a link.
+    *
+    * @param code the short code
+-   * @return totals, windowed counts and the last click
++   * @return totals, windowed counts, the last click and the top-ten attribution breakdowns
+    * @throws LinkNotFoundException when no link has that code
+    */
+   @Transactional(readOnly = true)
+@@ -59,6 +62,8 @@ public class AnalyticsService {
+         summary.total(),
+         summary.last24h(),
+         summary.last7d(),
+-        summary.lastClickedAt());
++        summary.lastClickedAt(),
++        clickEvents.topReferrers(link.getId(), TOP_N),
++        clickEvents.topCampaigns(link.getId(), TOP_N));
+   }
+ }
+diff --git a/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java b/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java
+index 0c071cb..d4ea8ed 100644
+--- a/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java
++++ b/url-shortener/src/main/java/dev/harshil/shortener/service/ClickRecorder.java
+@@ -57,7 +57,7 @@ public class ClickRecorder {
+   @EventListener
+   public void on(ClickRecorded event) {
+     try {
+-      clickEvents.save(new ClickEvent(event.linkId(), event.occurredAt()));
++      clickEvents.save(new ClickEvent(event.linkId(), event.occurredAt(), event.attribution()));
+     } catch (RuntimeException e) {
+       droppedOnError.increment();
+       log.error(
+diff --git a/url-shortener/src/main/resources/db/migration/V3__add_click_attribution.sql b/url-shortener/src/main/resources/db/migration/V3__add_click_attribution.sql
+new file mode 100644
+index 0000000..b57228b
+--- /dev/null
++++ b/url-shortener/src/main/resources/db/migration/V3__add_click_attribution.sql
+@@ -0,0 +1,14 @@
++-- V3: click attribution (ambiguous scenario, task T-202; decision in harness/requirements/R-03.md).
++-- Adds the referring site's host and the three campaign parameters carried on the short link
++-- request. The privacy position of ADR 0006 is unchanged: there is still no column for an IP
++-- address, a user agent, a full referrer URL, a location or a device. Every value is nullable and
++-- bounded (host 253, campaign fields 64). One ALTER TABLE ... ADD COLUMN per statement because H2
++-- and PostgreSQL disagree on the multi-column form.
++
++ALTER TABLE click_events ADD COLUMN referrer_host VARCHAR(253);
++
++ALTER TABLE click_events ADD COLUMN utm_source VARCHAR(64);
++
++ALTER TABLE click_events ADD COLUMN utm_medium VARCHAR(64);
++
++ALTER TABLE click_events ADD COLUMN utm_campaign VARCHAR(64);
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java b/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
+index 4240ee2..7452f34 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/UrlShortenerApplicationTest.java
+@@ -9,15 +9,21 @@ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.boot.test.context.SpringBootTest;
+ import org.springframework.jdbc.core.JdbcTemplate;
+ 
+-/** Proves the application context starts and the Flyway baseline schema is in place. */
++/**
++ * Proves the application context starts and every committed Flyway migration is in place: V1
++ * creates the two tables and V3 (click attribution, R-03) is the latest version applied.
++ */
+ @SpringBootTest
+ @TestProfile
+ class UrlShortenerApplicationTest {
+ 
++  /** The newest migration under db/migration; bump it when a migration is added. */
++  private static final int LATEST_MIGRATION_VERSION = 3;
++
+   @Autowired private DataSource dataSource;
+ 
+   @Test
+-  void contextStarts_appliesMigrationV1_createsLinksAndClickEventsTables() {
++  void contextStarts_appliesEveryCommittedMigration_createsLinksAndClickEventsTables() {
+     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+ 
+     Integer tables =
+@@ -30,6 +36,6 @@ class UrlShortenerApplicationTest {
+             "select max(version) from flyway_schema_history where success = true", Integer.class);
+ 
+     assertThat(tables).isEqualTo(2);
+-    assertThat(version).isEqualTo(1);
++    assertThat(version).isEqualTo(LATEST_MIGRATION_VERSION);
+   }
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/api/AttributionIT.java b/url-shortener/src/test/java/dev/harshil/shortener/api/AttributionIT.java
+new file mode 100644
+index 0000000..78b68a0
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/api/AttributionIT.java
+@@ -0,0 +1,180 @@
++package dev.harshil.shortener.api;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.awaitility.Awaitility.await;
++
++import dev.harshil.shortener.domain.ClickEvent;
++import dev.harshil.shortener.domain.Link;
++import dev.harshil.shortener.repository.ClickEventRepository;
++import dev.harshil.shortener.repository.LinkRepository;
++import dev.harshil.shortener.support.TestApiKey;
++import dev.harshil.shortener.support.TestProfile;
++import java.time.Duration;
++import java.time.Instant;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
++import org.springframework.boot.test.context.SpringBootTest;
++import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
++import org.springframework.http.HttpHeaders;
++import org.springframework.test.web.servlet.client.RestTestClient;
++
++/**
++ * Click attribution over HTTP (R-03, T-202): what the redirect records from the {@code Referer}
++ * header and the {@code utm_*} parameters, what the stats endpoint shows for it, and that the
++ * redirect itself is unchanged. The stored target carries its own query string so the test can tell
++ * "unchanged" from "parameters appended".
++ */
++@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
++@AutoConfigureRestTestClient
++@TestProfile
++class AttributionIT {
++
++  private static final String TARGET = "https://example.com/landing?keep=1";
++  private static final String LINKS = "/api/v1/links";
++  private static final Duration AT_MOST = Duration.ofSeconds(5);
++
++  @Autowired private RestTestClient client;
++  @Autowired private LinkRepository links;
++  @Autowired private ClickEventRepository clickEvents;
++
++  @AfterEach
++  void cleanTables() {
++    clickEvents.deleteAllInBatch();
++    links.deleteAllInBatch();
++  }
++
++  @Test
++  void redirectWithRefererAndUtmShowsUpInStats() {
++    links.save(new Link("attr001", TARGET, Instant.now()));
++
++    client
++        .get()
++        .uri("/attr001?utm_source=newsletter&utm_medium=email&utm_campaign=oct")
++        .header(HttpHeaders.REFERER, "https://News.Example.com/story?x=1")
++        .exchange()
++        .expectStatus()
++        .isFound()
++        .expectHeader()
++        .valueEquals(HttpHeaders.LOCATION, TARGET);
++    awaitClicks(1);
++
++    stats("attr001")
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.totalClicks")
++        .isEqualTo(1)
++        .jsonPath("$.referrers.length()")
++        .isEqualTo(1)
++        .jsonPath("$.referrers[0].host")
++        .isEqualTo("news.example.com")
++        .jsonPath("$.referrers[0].clicks")
++        .isEqualTo(1)
++        .jsonPath("$.campaigns.length()")
++        .isEqualTo(1)
++        .jsonPath("$.campaigns[0].source")
++        .isEqualTo("newsletter")
++        .jsonPath("$.campaigns[0].medium")
++        .isEqualTo("email")
++        .jsonPath("$.campaigns[0].campaign")
++        .isEqualTo("oct")
++        .jsonPath("$.campaigns[0].clicks")
++        .isEqualTo(1);
++  }
++
++  @Test
++  void redirectWithoutRefererRecordsNullHost() {
++    links.save(new Link("attr002", TARGET, Instant.now()));
++
++    client.get().uri("/attr002").exchange().expectStatus().isFound();
++    awaitClicks(1);
++
++    assertThat(onlyClick().getReferrerHost()).isNull();
++    stats("attr002")
++        .expectStatus()
++        .isOk()
++        .expectBody()
++        .jsonPath("$.totalClicks")
++        .isEqualTo(1)
++        .jsonPath("$.referrers")
++        .isEmpty()
++        .jsonPath("$.campaigns")
++        .isEmpty();
++  }
++
++  @Test
++  void redirect_refererThatIsNotAUrl_recordsNullHostAndStillCounts() {
++    links.save(new Link("attr003", TARGET, Instant.now()));
++
++    client
++        .get()
++        .uri("/attr003")
++        .header(HttpHeaders.REFERER, "not a url")
++        .exchange()
++        .expectStatus()
++        .isFound();
++    awaitClicks(1);
++
++    ClickEvent click = onlyClick();
++    assertThat(click.getReferrerHost()).isNull();
++    assertThat(click.getUtmSource()).isNull();
++  }
++
++  @Test
++  void redirect_utmWithControlCharactersAndLongValues_isCleanedAndTruncated() {
++    links.save(new Link("attr004", TARGET, Instant.now()));
++
++    client
++        .get()
++        .uri(
++            "/attr004?utm_source={source}&utm_campaign={campaign}",
++            "news\r\nletter",
++            "c".repeat(100))
++        .exchange()
++        .expectStatus()
++        .isFound();
++    awaitClicks(1);
++
++    ClickEvent click = onlyClick();
++    assertThat(click.getUtmSource()).isEqualTo("newsletter");
++    assertThat(click.getUtmMedium()).isNull();
++    assertThat(click.getUtmCampaign()).isEqualTo("c".repeat(64));
++  }
++
++  @Test
++  void queryParametersAreNotForwarded() {
++    links.save(new Link("attr005", TARGET, Instant.now()));
++
++    client
++        .get()
++        .uri("/attr005?utm_source=newsletter&utm_medium=email&utm_campaign=oct&gclid=abc")
++        .header(HttpHeaders.REFERER, "https://news.example.com/")
++        .exchange()
++        .expectStatus()
++        .isFound()
++        .expectHeader()
++        .valueEquals(HttpHeaders.LOCATION, TARGET)
++        .expectHeader()
++        .valueEquals(HttpHeaders.CACHE_CONTROL, "no-store");
++  }
++
++  private void awaitClicks(long expected) {
++    await()
++        .atMost(AT_MOST)
++        .untilAsserted(() -> assertThat(clickEvents.count()).isEqualTo(expected));
++  }
++
++  private ClickEvent onlyClick() {
++    return clickEvents.findAll().get(0);
++  }
++
++  private RestTestClient.ResponseSpec stats(String code) {
++    return client
++        .get()
++        .uri(LINKS + "/" + code + "/stats")
++        .header(TestApiKey.HEADER, TestApiKey.VALUE)
++        .exchange();
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/domain/ClickAttributionTest.java b/url-shortener/src/test/java/dev/harshil/shortener/domain/ClickAttributionTest.java
+new file mode 100644
+index 0000000..790657f
+--- /dev/null
++++ b/url-shortener/src/test/java/dev/harshil/shortener/domain/ClickAttributionTest.java
+@@ -0,0 +1,162 @@
++package dev.harshil.shortener.domain;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.Named;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.MethodSource;
++
++/**
++ * Every rule of {@link ClickAttribution#from(String, Map)} (T-202) plus the edge-case table of
++ * T-203: case folding, trailing dots, IPv6 and userinfo in the referer, relative and opaque
++ * references, over-long hosts, duplicate and empty parameters, whitespace, control characters and
++ * non-ASCII text. Each row states the input and the single value that must come out.
++ */
++class ClickAttributionTest {
++
++  private static final Map<String, String[]> NO_QUERY = Map.of();
++  private static final String LONG_LABEL = "a".repeat(300);
++
++  @Test
++  void from_refererAndAllThreeUtmParameters_keepsTheLowerCasedHostAndTheTriple() {
++    Map<String, String[]> query =
++        query("utm_source", "newsletter", "utm_medium", "email", "utm_campaign", "oct");
++
++    ClickAttribution attribution =
++        ClickAttribution.from("https://News.Example.com/story?x=1", query);
++
++    assertThat(attribution)
++        .isEqualTo(new ClickAttribution("news.example.com", "newsletter", "email", "oct"));
++  }
++
++  @Test
++  void from_nullRefererAndNullQuery_returnsNoneWithoutThrowing() {
++    assertThat(ClickAttribution.from(null, null)).isEqualTo(ClickAttribution.NONE);
++  }
++
++  @Test
++  void from_queryWithOnlyOtherParameters_ignoresThemIncludingUpperCaseUtmKeys() {
++    Map<String, String[]> query =
++        query("gclid", "abc", "fbclid", "def", "UTM_SOURCE", "shout", "utm_term", "x");
++
++    assertThat(ClickAttribution.from(null, query)).isEqualTo(ClickAttribution.NONE);
++  }
++
++  @Test
++  void from_eachUtmKeyIsReadIndependently_soAPartialTripleKeepsOnlyWhatWasSent() {
++    Map<String, String[]> query = query("utm_medium", "social");
++
++    assertThat(ClickAttribution.from(null, query))
++        .isEqualTo(new ClickAttribution(null, null, "social", null));
++  }
++
++  @ParameterizedTest(name = "{0}")
++  @MethodSource("refererEdgeCases")
++  void from_refererEdgeCase_keepsOnlyTheLowerCasedHostOrNull(String referer, String expectedHost) {
++    assertThat(ClickAttribution.from(referer, NO_QUERY).referrerHost()).isEqualTo(expectedHost);
++  }
++
++  @ParameterizedTest(name = "{0}")
++  @MethodSource("utmEdgeCases")
++  void from_utmSourceEdgeCase_isCleanedTrimmedBoundedOrNull(
++      Map<String, String[]> query, String expectedSource) {
++    assertThat(ClickAttribution.from(null, query).utmSource()).isEqualTo(expectedSource);
++  }
++
++  static Stream<Arguments> refererEdgeCases() {
++    return Stream.of(
++        row(
++            "mixed-case host is lower-cased",
++            "https://News.Example.com/story?x=1",
++            "news.example.com"),
++        row("upper-case scheme and host", "HTTPS://EXAMPLE.COM", "example.com"),
++        row("host without a path", "https://example.com", "example.com"),
++        row("port is dropped", "https://example.com:8443/", "example.com"),
++        row("userinfo is dropped", "https://alice:secret@example.com/inbox", "example.com"),
++        row("trailing dot is kept as sent", "https://example.com./", "example.com."),
++        row("IPv6 host keeps its brackets", "https://[2001:DB8::1]:8443/path", "[2001:db8::1]"),
++        row("IPv4 host", "http://192.0.2.10/page", "192.0.2.10"),
++        row("localhost", "http://localhost:3000/dev", "localhost"),
++        row("relative reference", "/internal/page", null),
++        row("scheme-relative reference", "//example.com/x", null),
++        row("data URL is opaque", "data:text/plain,hello", null),
++        row("mailto URL is opaque", "mailto:someone@example.com", null),
++        row("not a URL", "not a url", null),
++        row("only colons", "::::", null),
++        row("empty header", "", null),
++        row("absent header", null, null),
++        row("underscore makes the authority registry-based", "https://my_host.example.com/", null),
++        row("non-ASCII host is not parsed by java.net.URI", "https://bücher.example/", null),
++        row(
++            "very long host is cut to 253 characters",
++            "https://" + LONG_LABEL + ".example.com/",
++            LONG_LABEL.substring(0, ClickAttribution.MAX_HOST_LENGTH)));
++  }
++
++  static Stream<Arguments> utmEdgeCases() {
++    return Stream.of(
++        row("plain value is kept", query("utm_source", "newsletter"), "newsletter"),
++        row(
++            "surrounding whitespace is trimmed",
++            query("utm_source", "  newsletter \t"),
++            "newsletter"),
++        row("CR and LF are removed", query("utm_source", "news\r\nletter"), "newsletter"),
++        row(
++            "NUL, ESC, DEL and C1 controls are removed",
++            query("utm_source", "a\u0000b\u001bc\u007fd\u0085e"),
++            "abcde"),
++        row(
++            "controls do not count towards the limit",
++            query("utm_source", "\n".repeat(10) + "y".repeat(ClickAttribution.MAX_UTM_LENGTH)),
++            "y".repeat(ClickAttribution.MAX_UTM_LENGTH)),
++        row(
++            "over-long value is cut to 64 characters",
++            query("utm_source", "x".repeat(100)),
++            "x".repeat(ClickAttribution.MAX_UTM_LENGTH)),
++        row(
++            "value of exactly 64 characters is kept whole",
++            query("utm_source", "z".repeat(ClickAttribution.MAX_UTM_LENGTH)),
++            "z".repeat(ClickAttribution.MAX_UTM_LENGTH)),
++        row(
++            "a surrogate pair is not split at the cut",
++            query("utm_source", "w".repeat(63) + "😀"), // 63 chars + one emoji = 65
++            "w".repeat(63)),
++        row("non-ASCII text is kept", query("utm_source", "café-été"), "café-été"),
++        row(
++            "duplicate key takes the first value",
++            values("utm_source", "first", "second"),
++            "first"),
++        row("empty value becomes null", query("utm_source", ""), null),
++        row("whitespace-only value becomes null", query("utm_source", "   "), null),
++        row("control-only value becomes null", query("utm_source", "\r\n\u0000"), null),
++        row("empty value array becomes null", values("utm_source"), null),
++        row("null first value becomes null", values("utm_source", (String) null), null),
++        row("absent key is null", query("utm_medium", "email"), null),
++        row("empty query is null", NO_QUERY, null));
++  }
++
++  private static Arguments row(String name, Object input, String expected) {
++    return Arguments.of(Named.of(name, input), expected);
++  }
++
++  /** Single-valued parameters, as the servlet container hands them over. */
++  private static Map<String, String[]> query(String... keyValuePairs) {
++    Map<String, String[]> query = new HashMap<>();
++    for (int i = 0; i < keyValuePairs.length; i += 2) {
++      query.put(keyValuePairs[i], new String[] {keyValuePairs[i + 1]});
++    }
++    return query;
++  }
++
++  /** One parameter with every value it was sent with, in order. */
++  private static Map<String, String[]> values(String key, String... values) {
++    Map<String, String[]> query = new HashMap<>();
++    query.put(key, values);
++    return query;
++  }
++}
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+index 7163179..f67c2d5 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/ClickEventRepositoryTest.java
+@@ -2,11 +2,15 @@ package dev.harshil.shortener.repository;
+ 
+ import static org.assertj.core.api.Assertions.assertThat;
+ 
++import dev.harshil.shortener.api.dto.CampaignStats;
++import dev.harshil.shortener.api.dto.ReferrerStats;
++import dev.harshil.shortener.domain.ClickAttribution;
+ import dev.harshil.shortener.domain.ClickEvent;
+ import dev.harshil.shortener.domain.Link;
+ import dev.harshil.shortener.support.TestProfile;
+ import java.time.Duration;
+ import java.time.Instant;
++import java.util.List;
+ import javax.sql.DataSource;
+ import org.junit.jupiter.api.AfterEach;
+ import org.junit.jupiter.api.Test;
+@@ -99,8 +103,130 @@ class ClickEventRepositoryTest {
+     assertThat(links.existsByCode("cascade")).isFalse();
+   }
+ 
++  @Test
++  void topReferrersAndCampaigns_linkWithoutClicks_returnEmptyLists() {
++    Link link = saveLink("quiet01");
++
++    assertThat(clickEvents.topReferrers(link.getId(), 10)).isEmpty();
++    assertThat(clickEvents.topCampaigns(link.getId(), 10)).isEmpty();
++  }
++
++  @Test
++  void topReferrers_hostsWithDifferentAndTiedCounts_ordersByClicksDescendingThenHost() {
++    Link link = saveLink("refs001");
++    saveClick(link, "b.example", null, null, null);
++    saveClick(link, "c.example", null, null, null);
++    saveClick(link, "a.example", null, null, null);
++    saveClick(link, "c.example", null, null, null);
++    saveClick(link, "b.example", null, null, null);
++    saveClick(link, "a.example", null, null, null);
++    saveClick(link, "c.example", null, null, null);
++
++    List<ReferrerStats> top = clickEvents.topReferrers(link.getId(), 10);
++
++    assertThat(top)
++        .containsExactly(
++            new ReferrerStats("c.example", 3),
++            new ReferrerStats("a.example", 2),
++            new ReferrerStats("b.example", 2));
++  }
++
++  @Test
++  void topReferrers_moreHostsThanTheLimit_returnsOnlyTheLimitInOrder() {
++    Link link = saveLink("refs002");
++    for (int i = 11; i >= 0; i--) {
++      saveClick(link, "h" + String.format("%02d", i) + ".example", null, null, null);
++    }
++
++    List<ReferrerStats> top = clickEvents.topReferrers(link.getId(), 10);
++
++    assertThat(top)
++        .hasSize(10)
++        .extracting(ReferrerStats::host)
++        .containsExactly(
++            "h00.example",
++            "h01.example",
++            "h02.example",
++            "h03.example",
++            "h04.example",
++            "h05.example",
++            "h06.example",
++            "h07.example",
++            "h08.example",
++            "h09.example");
++  }
++
++  @Test
++  void topReferrers_clicksWithoutAHost_areExcludedFromTheBreakdown() {
++    Link link = saveLink("refs003");
++    saveClick(link, null, "newsletter", null, null);
++    saveClick(link, null, null, null, null);
++    saveClick(link, "a.example", null, null, null);
++
++    assertThat(clickEvents.topReferrers(link.getId(), 10))
++        .containsExactly(new ReferrerStats("a.example", 1));
++  }
++
++  @Test
++  void topReferrers_eventsOfAnotherLink_areNotCounted() {
++    Link counted = saveLink("refs004");
++    Link other = saveLink("refs005");
++    saveClick(counted, "a.example", null, null, null);
++    saveClick(other, "a.example", null, null, null);
++    saveClick(other, "b.example", null, null, null);
++
++    assertThat(clickEvents.topReferrers(counted.getId(), 10))
++        .containsExactly(new ReferrerStats("a.example", 1));
++  }
++
++  @Test
++  void topCampaigns_triplesWithDifferentCounts_ordersByClicksDescendingThenNames() {
++    Link link = saveLink("camp001");
++    saveClick(link, null, "twitter", "social", "oct");
++    saveClick(link, null, "newsletter", "email", "oct");
++    saveClick(link, null, "newsletter", "email", "sep");
++    saveClick(link, null, "newsletter", "email", "oct");
++
++    List<CampaignStats> top = clickEvents.topCampaigns(link.getId(), 10);
++
++    assertThat(top)
++        .containsExactly(
++            new CampaignStats("newsletter", "email", "oct", 2),
++            new CampaignStats("newsletter", "email", "sep", 1),
++            new CampaignStats("twitter", "social", "oct", 1));
++  }
++
++  @Test
++  void topCampaigns_clicksWithAllThreeFieldsNull_areExcludedButPartialTriplesKept() {
++    Link link = saveLink("camp002");
++    saveClick(link, "a.example", null, null, null);
++    saveClick(link, null, null, null, null);
++    saveClick(link, null, "newsletter", null, null);
++
++    assertThat(clickEvents.topCampaigns(link.getId(), 10))
++        .containsExactly(new CampaignStats("newsletter", null, null, 1));
++  }
++
++  @Test
++  void topCampaigns_moreTriplesThanTheLimit_returnsOnlyTheLimit() {
++    Link link = saveLink("camp003");
++    for (int i = 0; i < 11; i++) {
++      saveClick(link, null, "source" + String.format("%02d", i), "email", "oct");
++    }
++
++    assertThat(clickEvents.topCampaigns(link.getId(), 10))
++        .hasSize(10)
++        .extracting(CampaignStats::source)
++        .doesNotContain("source10");
++  }
++
+   private Link saveLink(String code) {
+     return links.save(
+         new Link(code, "https://example.com/" + code, NOW.minus(Duration.ofDays(30))));
+   }
++
++  private void saveClick(Link link, String host, String source, String medium, String campaign) {
++    clickEvents.save(
++        new ClickEvent(link.getId(), NOW, new ClickAttribution(host, source, medium, campaign)));
++  }
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+index 0116587..f04cf27 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/repository/MigrationTest.java
+@@ -14,8 +14,10 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
+ import org.springframework.jdbc.core.JdbcTemplate;
+ 
+ /**
+- * Proves migration V1 through the database catalogue rather than through Hibernate, so the named
+- * constraints and the index the design relies on (3.5) exist exactly as written.
++ * Proves migrations V1 and V3 through the database catalogue rather than through Hibernate, so the
++ * named constraints and the index the design relies on (3.5) exist exactly as written, and so the
++ * privacy position (ADR 0006, R-03) is enforced by the schema: {@code click_events} has exactly the
++ * seven columns the two migrations add and nothing that could hold an address or a user agent.
+  */
+ @DataJpaTest
+ @AutoConfigureTestDatabase(replace = Replace.NONE)
+@@ -76,13 +78,51 @@ class MigrationTest {
+   }
+ 
+   @Test
+-  void clickEvents_storeNoVisitorData_onlyIdLinkIdAndOccurredAt() {
++  void clickEvents_storeNoVisitorData_exactlyTheSevenColumnsOfV1AndV3() {
+     List<String> columns =
+         jdbc.queryForList(
+             "select lower(column_name) from information_schema.columns "
+                 + "where lower(table_name) = 'click_events' order by ordinal_position",
+             String.class);
+ 
+-    assertThat(columns).containsExactly("id", "link_id", "occurred_at");
++    assertThat(columns)
++        .containsExactly(
++            "id",
++            "link_id",
++            "occurred_at",
++            "referrer_host",
++            "utm_source",
++            "utm_medium",
++            "utm_campaign");
++  }
++
++  @Test
++  void flywayHistory_versionThree_isAppliedSuccessfully() {
++    Integer applied =
++        jdbc.queryForObject(
++            "select count(*) from flyway_schema_history where version = '3' and success = true",
++            Integer.class);
++
++    assertThat(applied).isEqualTo(1);
++  }
++
++  @Test
++  void v3AddsNullableAttributionColumns() {
++    List<String> columns =
++        jdbc.queryForList(
++            "select lower(column_name) || '|' || is_nullable || '|' || lower(data_type) || '|' "
++                + "|| cast(character_maximum_length as varchar) "
++                + "from information_schema.columns where lower(table_name) = 'click_events' "
++                + "and lower(column_name) in "
++                + "('referrer_host', 'utm_source', 'utm_medium', 'utm_campaign') "
++                + "order by ordinal_position",
++            String.class);
++
++    assertThat(columns)
++        .containsExactly(
++            "referrer_host|YES|character varying|253",
++            "utm_source|YES|character varying|64",
++            "utm_medium|YES|character varying|64",
++            "utm_campaign|YES|character varying|64");
+   }
+ }
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+index e81d16c..40c9fd7 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/AnalyticsServiceTest.java
+@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
+ import static org.mockito.Mockito.verifyNoInteractions;
+ import static org.mockito.Mockito.when;
+ 
++import dev.harshil.shortener.api.dto.CampaignStats;
++import dev.harshil.shortener.api.dto.ReferrerStats;
+ import dev.harshil.shortener.api.dto.StatsResponse;
+ import dev.harshil.shortener.domain.Link;
+ import dev.harshil.shortener.domain.LinkNotFoundException;
+@@ -15,6 +17,7 @@ import java.time.Clock;
+ import java.time.Duration;
+ import java.time.Instant;
+ import java.time.ZoneOffset;
++import java.util.List;
+ import java.util.Optional;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+@@ -64,6 +67,23 @@ class AnalyticsServiceTest {
+     assertThat(stats).isEqualTo(new StatsResponse("quiet01", 0L, 0L, 0L, null));
+   }
+ 
++  @Test
++  void stats_knownCode_fillsTheTopTenReferrersAndCampaignsFromTheRepository() {
++    List<ReferrerStats> referrers = List.of(new ReferrerStats("news.example.com", 2));
++    List<CampaignStats> campaigns = List.of(new CampaignStats("newsletter", "email", "oct", 1));
++    when(links.findByCode("attr01")).thenReturn(Optional.of(linkWithId("attr01")));
++    when(clickEvents.summarize(LINK_ID, SINCE_24H, SINCE_7D))
++        .thenReturn(new ClickSummary(3, 3, 3, NOW));
++    when(clickEvents.topReferrers(LINK_ID, AnalyticsService.TOP_N)).thenReturn(referrers);
++    when(clickEvents.topCampaigns(LINK_ID, AnalyticsService.TOP_N)).thenReturn(campaigns);
++
++    StatsResponse stats = service.stats("attr01");
++
++    assertThat(stats.referrers()).containsExactlyElementsOf(referrers);
++    assertThat(stats.campaigns()).containsExactlyElementsOf(campaigns);
++    assertThat(AnalyticsService.TOP_N).isEqualTo(10);
++  }
++
+   @Test
+   void stats_unknownCode_throwsLinkNotFoundWithoutQueryingClicks() {
+     when(links.findByCode("nothere")).thenReturn(Optional.empty());
+diff --git a/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java b/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java
+index 78d3876..f411e08 100644
+--- a/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java
++++ b/url-shortener/src/test/java/dev/harshil/shortener/service/ClickRecorderTest.java
+@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
+ 
++import dev.harshil.shortener.domain.ClickAttribution;
+ import dev.harshil.shortener.domain.ClickEvent;
+ import dev.harshil.shortener.domain.ClickRecorded;
+ import dev.harshil.shortener.repository.ClickEventRepository;
+@@ -45,6 +46,39 @@ class ClickRecorderTest {
+     assertThat(saved.getValue().getOccurredAt()).isEqualTo(NOW);
+   }
+ 
++  @Test
++  void on_eventWithAttribution_copiesEveryAttributionValueOntoTheClickEvent() {
++    ClickAttribution attribution =
++        new ClickAttribution("news.example.com", "newsletter", "email", "oct");
++
++    recorder.on(new ClickRecorded(7L, NOW, "req-7", attribution));
++
++    ArgumentCaptor<ClickEvent> saved = ArgumentCaptor.forClass(ClickEvent.class);
++    verify(clickEvents).save(saved.capture());
++    assertThat(saved.getValue())
++        .extracting(
++            ClickEvent::getReferrerHost,
++            ClickEvent::getUtmSource,
++            ClickEvent::getUtmMedium,
++            ClickEvent::getUtmCampaign)
++        .containsExactly("news.example.com", "newsletter", "email", "oct");
++  }
++
++  @Test
++  void on_eventWithoutAttribution_savesNullAttributionColumns() {
++    recorder.on(EVENT);
++
++    ArgumentCaptor<ClickEvent> saved = ArgumentCaptor.forClass(ClickEvent.class);
++    verify(clickEvents).save(saved.capture());
++    assertThat(saved.getValue())
++        .extracting(
++            ClickEvent::getReferrerHost,
++            ClickEvent::getUtmSource,
++            ClickEvent::getUtmMedium,
++            ClickEvent::getUtmCampaign)
++        .containsOnlyNulls();
++  }
++
+   @Test
+   void on_successfulSave_doesNotCountADrop() {
+     recorder.on(EVENT);

@@ -57,7 +57,7 @@ public class ClickRecorder {
   @EventListener
   public void on(ClickRecorded event) {
     try {
-      clickEvents.save(new ClickEvent(event.linkId(), event.occurredAt()));
+      clickEvents.save(new ClickEvent(event.linkId(), event.occurredAt(), event.attribution()));
     } catch (RuntimeException e) {
       droppedOnError.increment();
       log.error(
