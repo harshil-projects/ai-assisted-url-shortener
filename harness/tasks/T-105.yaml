@@ -4,7 +4,7 @@ requirement: R-02
 activities: [debug]
 impact: high
 impact_reasons: [security]
-status: in-progress
+status: done
 depends_on: [T-104]
 intent: >
   Take one candidate marked real in harness/reviews/greenfield-review.md, reproduce it, state a
