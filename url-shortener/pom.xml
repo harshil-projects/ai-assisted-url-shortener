@@ -18,7 +18,7 @@
 
   <properties>
     <!-- Not managed by the Spring Boot BOM; versions verified on Maven Central 2026-10-12. -->
-    <springdoc.version>3.1.1</springdoc.version>
+    <springdoc.version>3.2.0</springdoc.version>
     <bucket4j.version>8.21.0</bucket4j.version>
     <hdrhistogram.version>2.2.2</hdrhistogram.version>
   </properties>
