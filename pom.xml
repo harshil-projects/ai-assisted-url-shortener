@@ -7,7 +7,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>4.1.1</version>
+    <version>4.1.2</version>
     <relativePath/>
   </parent>
 
@@ -33,17 +33,17 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
     <!-- Quality gate tool versions. Each was verified on Maven Central on 2026-10-12 (ADR 0001). -->
-    <spotless.version>3.10.4</spotless.version>
+    <spotless.version>3.11.0</spotless.version>
     <!-- 1.37.0 adds a commonmark dependency that the Spotless 3.10.4 formatter step does not load
          (NoClassDefFoundError org/commonmark/parser/Parser on every file); 1.36.1 is the version
          Spotless 3.10.4 ships and tests with. Recorded in the T-000 ledger entry. -->
     <google-java-format.version>1.36.1</google-java-format.version>
     <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
-    <checkstyle.version>14.3.0</checkstyle.version>
-    <spotbugs-plugin.version>4.10.4.1</spotbugs-plugin.version>
+    <checkstyle.version>14.4.0</checkstyle.version>
+    <spotbugs-plugin.version>4.10.5.0</spotbugs-plugin.version>
     <findsecbugs.version>1.14.0</findsecbugs.version>
-    <jacoco.version>0.8.15</jacoco.version>
-    <enforcer.version>3.6.3</enforcer.version>
+    <jacoco.version>0.8.16</jacoco.version>
+    <enforcer.version>3.7.0</enforcer.version>
 
     <!-- Surefire runs every test (unit, slice, integration) so one JaCoCo file covers all. -->
     <surefire.excludedGroups>perf</surefire.excludedGroups>
